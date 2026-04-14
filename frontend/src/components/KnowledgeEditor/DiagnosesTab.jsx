@@ -1,7 +1,9 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
-  addDiagnosis,
+  createDiagnosis,
   deleteDiagnosis,
+  getCharacteristics,
+  getDiagnosisById,
   getDiagnoses,
   getTreatments,
   updateDiagnosis
@@ -11,60 +13,98 @@ function prettyJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function criteriaForEdit(criteria) {
+  return criteria.map((item) => ({
+    characteristic_id: item.characteristic_id,
+    expected_enum_key: item.expected_enum_key,
+    expected_min: item.expected_min,
+    expected_max: item.expected_max
+  }));
+}
+
+function normalizeCriteria(raw) {
+  return raw.map((item) => ({
+    characteristic_id: Number(item.characteristic_id),
+    expected_enum_key: item.expected_enum_key ?? null,
+    expected_min: item.expected_min === null || item.expected_min === undefined || item.expected_min === "" ? null : Number(item.expected_min),
+    expected_max: item.expected_max === null || item.expected_max === undefined || item.expected_max === "" ? null : Number(item.expected_max)
+  }));
+}
+
 export default function DiagnosesTab() {
-  const [diagnoses, setDiagnoses] = useState({});
-  const [treatments, setTreatments] = useState({});
-  const [selected, setSelected] = useState("");
-  const [newName, setNewName] = useState("");
-  const [form, setForm] = useState({ icd10: "", treatment: "", characteristicsJson: "{}" });
+  const [diagnoses, setDiagnoses] = useState([]);
+  const [treatments, setTreatments] = useState([]);
+  const [characteristics, setCharacteristics] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [form, setForm] = useState({
+    name: "",
+    icd10: "",
+    treatment_id: "",
+    criteriaJson: "[]"
+  });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function refresh() {
-    const [diagnosesRes, treatmentsRes] = await Promise.all([getDiagnoses(), getTreatments()]);
+    const [diagnosesRes, treatmentsRes, characteristicsRes] = await Promise.all([
+      getDiagnoses(),
+      getTreatments(),
+      getCharacteristics()
+    ]);
     setDiagnoses(diagnosesRes.data);
     setTreatments(treatmentsRes.data);
+    setCharacteristics(characteristicsRes.data);
   }
 
   useEffect(() => {
-    refresh().catch(() => setError("Не удалось загрузить диагнозы"));
+    refresh().catch(() => setError("Не удалось загрузить данные"));
   }, []);
 
-  const treatmentNames = useMemo(() => Object.keys(treatments), [treatments]);
-
-  function loadDiagnosis(name) {
-    setSelected(name);
+  async function loadDiagnosis(id) {
+    setSelectedId(id);
     setMessage("");
     setError("");
 
-    if (!name) {
-      setForm({ icd10: "", treatment: "", characteristicsJson: "{}" });
+    if (!id) {
+      setForm({ name: "", icd10: "", treatment_id: "", criteriaJson: "[]" });
       return;
     }
 
-    const item = diagnoses[name];
-    setForm({
-      icd10: item.icd10 || "",
-      treatment: item.treatment || "",
-      characteristicsJson: prettyJson(item.characteristics || {})
-    });
+    try {
+      const res = await getDiagnosisById(id);
+      const item = res.data;
+      setForm({
+        name: item.name,
+        icd10: item.icd10 || "",
+        treatment_id: String(item.treatment_id),
+        criteriaJson: prettyJson(criteriaForEdit(item.criteria || []))
+      });
+    } catch (err) {
+      setError(err.response?.data?.detail || "Не удалось загрузить диагноз");
+    }
+  }
+
+  function buildPayload() {
+    const criteria = normalizeCriteria(JSON.parse(form.criteriaJson || "[]"));
+    return {
+      name: form.name.trim(),
+      icd10: form.icd10.trim() ? form.icd10.trim() : null,
+      treatment_id: Number(form.treatment_id),
+      criteria
+    };
   }
 
   async function saveExisting() {
-    if (!selected) {
+    if (!selectedId) {
       setError("Выберите диагноз для сохранения");
       return;
     }
 
     try {
-      const payload = {
-        icd10: form.icd10 || null,
-        treatment: form.treatment,
-        characteristics: JSON.parse(form.characteristicsJson || "{}")
-      };
-
-      await updateDiagnosis(selected, payload);
+      const payload = buildPayload();
+      await updateDiagnosis(Number(selectedId), payload);
       await refresh();
+      await loadDiagnosis(selectedId);
       setMessage("Изменения сохранены");
       setError("");
     } catch (err) {
@@ -74,22 +114,11 @@ export default function DiagnosesTab() {
   }
 
   async function createNew() {
-    if (!newName.trim()) {
-      setError("Введите название нового диагноза");
-      return;
-    }
-
     try {
-      const payload = {
-        icd10: form.icd10 || null,
-        treatment: form.treatment,
-        characteristics: JSON.parse(form.characteristicsJson || "{}")
-      };
-
-      await addDiagnosis(newName.trim(), payload);
+      const payload = buildPayload();
+      const res = await createDiagnosis(payload);
       await refresh();
-      loadDiagnosis(newName.trim());
-      setNewName("");
+      await loadDiagnosis(String(res.data.id));
       setMessage("Диагноз добавлен");
       setError("");
     } catch (err) {
@@ -99,15 +128,15 @@ export default function DiagnosesTab() {
   }
 
   async function removeCurrent() {
-    if (!selected) {
+    if (!selectedId) {
       setError("Сначала выберите диагноз");
       return;
     }
 
     try {
-      await deleteDiagnosis(selected);
+      await deleteDiagnosis(Number(selectedId));
       await refresh();
-      loadDiagnosis("");
+      await loadDiagnosis("");
       setMessage("Диагноз удалён");
       setError("");
     } catch (err) {
@@ -120,19 +149,19 @@ export default function DiagnosesTab() {
     <div className="editor-grid">
       <label>
         Список диагнозов
-        <select value={selected} onChange={(e) => loadDiagnosis(e.target.value)}>
+        <select value={selectedId} onChange={(e) => loadDiagnosis(e.target.value)}>
           <option value="">-- выберите --</option>
-          {Object.keys(diagnoses).map((name) => (
-            <option key={name} value={name}>
-              {name}
+          {diagnoses.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
             </option>
           ))}
         </select>
       </label>
 
       <label>
-        Новый диагноз
-        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Название" />
+        Название диагноза
+        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
       </label>
 
       <label>
@@ -143,33 +172,39 @@ export default function DiagnosesTab() {
       <label>
         Лечение
         <select
-          value={form.treatment}
-          onChange={(e) => setForm({ ...form, treatment: e.target.value })}
+          value={form.treatment_id}
+          onChange={(e) => setForm({ ...form, treatment_id: e.target.value })}
         >
           <option value="">-- выберите --</option>
-          {treatmentNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
+          {treatments.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
             </option>
           ))}
         </select>
       </label>
 
       <label>
-        Характеристики (JSON)
+        Критерии (JSON)
         <textarea
-          rows={9}
-          value={form.characteristicsJson}
-          onChange={(e) => setForm({ ...form, characteristicsJson: e.target.value })}
+          rows={10}
+          value={form.criteriaJson}
+          onChange={(e) => setForm({ ...form, criteriaJson: e.target.value })}
         />
       </label>
+
+      <div className="alert">
+        Характеристики для criteria:
+        <br />
+        {characteristics.map((item) => `${item.id}: ${item.name}`).join(" | ")}
+      </div>
 
       <div className="button-row">
         <button type="button" className="primary" onClick={saveExisting}>
           Сохранить выбранный
         </button>
         <button type="button" onClick={createNew}>
-          Добавить новый
+          Создать диагноз
         </button>
         <button type="button" className="danger" onClick={removeCurrent}>
           Удалить выбранный

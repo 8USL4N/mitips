@@ -1,3 +1,3 @@
-﻿from . import knowledge, solver
+﻿from . import characteristics, diagnoses, solver, treatments
 
-__all__ = ["knowledge", "solver"]
+__all__ = ["diagnoses", "characteristics", "treatments", "solver"]

@@ -7,27 +7,22 @@ const api = axios.create({
   }
 });
 
-export const getKnowledgeBase = () => api.get("/knowledge/");
-export const getDiagnoses = () => api.get("/knowledge/diagnoses");
-export const getCharacteristics = () => api.get("/knowledge/characteristics");
-export const getTreatments = () => api.get("/knowledge/treatments");
+export const getDiagnoses = () => api.get("/diagnoses");
+export const getDiagnosisById = (id) => api.get(`/diagnoses/${id}`);
+export const createDiagnosis = (payload) => api.post("/diagnoses", payload);
+export const updateDiagnosis = (id, payload) => api.put(`/diagnoses/${id}`, payload);
+export const deleteDiagnosis = (id) => api.delete(`/diagnoses/${id}`);
 
-export const solveDiagnosis = (diagnosis, patientValues) =>
-  api.post("/solver/solve", { diagnosis, patient_values: patientValues });
+export const getCharacteristics = () => api.get("/characteristics");
 
-export const rankDiagnoses = (patientValues) =>
-  api.post("/solver/rank", { diagnosis: "", patient_values: patientValues });
+export const getTreatments = () => api.get("/treatments");
+export const updateTreatmentActions = (id, actions) =>
+  api.put(`/treatments/${id}/actions`, { actions });
 
-export const addDiagnosis = (name, payload) =>
-  api.post(`/knowledge/diagnoses/${encodeURIComponent(name)}`, payload);
+export const solveDiagnosis = (diagnosisId, patientValues) =>
+  api.post("/solver/solve", { diagnosis_id: diagnosisId, patient_values: patientValues });
 
-export const updateDiagnosis = (name, payload) =>
-  api.put(`/knowledge/diagnoses/${encodeURIComponent(name)}`, payload);
-
-export const deleteDiagnosis = (name) =>
-  api.delete(`/knowledge/diagnoses/${encodeURIComponent(name)}`);
-
-export const updateTreatment = (name, actions) =>
-  api.put(`/knowledge/treatments/${encodeURIComponent(name)}`, { actions });
+export const rankDiagnoses = (diagnosisId, patientValues) =>
+  api.post("/solver/rank", { diagnosis_id: diagnosisId, patient_values: patientValues });
 
 export default api;

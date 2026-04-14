@@ -1,9 +1,9 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { getTreatments, updateTreatment } from "../../api/client";
+import { getTreatments, updateTreatmentActions } from "../../api/client";
 
 export default function TreatmentsTab() {
-  const [treatments, setTreatments] = useState({});
-  const [selected, setSelected] = useState("");
+  const [treatments, setTreatments] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
   const [actions, setActions] = useState([]);
   const [newAction, setNewAction] = useState("");
   const [message, setMessage] = useState("");
@@ -18,11 +18,15 @@ export default function TreatmentsTab() {
     refresh().catch(() => setError("Не удалось загрузить лечения"));
   }, []);
 
-  const treatmentNames = useMemo(() => Object.keys(treatments), [treatments]);
+  const selectedTreatment = useMemo(
+    () => treatments.find((item) => String(item.id) == String(selectedId)),
+    [treatments, selectedId]
+  );
 
-  function onSelect(name) {
-    setSelected(name);
-    setActions(treatments[name] || []);
+  function onSelect(id) {
+    setSelectedId(id);
+    const treatment = treatments.find((item) => String(item.id) === String(id));
+    setActions(treatment?.actions || []);
     setMessage("");
     setError("");
   }
@@ -40,13 +44,13 @@ export default function TreatmentsTab() {
   }
 
   async function save() {
-    if (!selected) {
+    if (!selectedId) {
       setError("Выберите лечение");
       return;
     }
 
     try {
-      await updateTreatment(selected, actions);
+      await updateTreatmentActions(Number(selectedId), actions);
       await refresh();
       setMessage("Лечение обновлено");
       setError("");
@@ -60,15 +64,17 @@ export default function TreatmentsTab() {
     <div className="editor-grid">
       <label>
         Лечение
-        <select value={selected} onChange={(e) => onSelect(e.target.value)}>
+        <select value={selectedId} onChange={(e) => onSelect(e.target.value)}>
           <option value="">-- выберите --</option>
-          {treatmentNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
+          {treatments.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
             </option>
           ))}
         </select>
       </label>
+
+      {selectedTreatment && <div className="muted">Выбрано: {selectedTreatment.name}</div>}
 
       <div>
         <p className="muted">Шаги лечения</p>

@@ -1,32 +1,29 @@
-﻿import json
-from pathlib import Path
-
-import pytest
-
-from app import knowledge
+﻿from app import db
+from app.services.knowledge_service import KnowledgeService
 
 
-@pytest.fixture()
-def temp_kb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    source = Path(__file__).resolve().parents[1] / "data" / "knowledge_base.json"
-    target = tmp_path / "knowledge_base.json"
-    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    monkeypatch.setattr(knowledge, "KB_PATH", target)
-    return target
+def test_service_lists_have_expected_sizes(client) -> None:
+    with db.SessionLocal() as session:
+        service = KnowledgeService(session)
+        diagnoses = service.list_diagnoses()
+        characteristics = service.list_characteristics()
+        treatments = service.list_treatments()
+
+    assert len(diagnoses) == 9
+    assert len(characteristics) >= 7
+    assert len(treatments) >= 9
 
 
-def test_load_kb_has_expected_sections(temp_kb: Path) -> None:
-    data = knowledge.load_kb()
-    assert set(data.keys()) == {"body_systems", "characteristics", "diagnoses", "treatments"}
+def test_update_treatment_actions_persists(client) -> None:
+    with db.SessionLocal() as session:
+        service = KnowledgeService(session)
+        treatment = next(item for item in service.list_treatments() if item["name"] == "Лечение холеры")
+        original_actions = treatment["actions"]
 
+        updated = service.update_treatment_actions(treatment["id"], [*original_actions, "Тестовый шаг"])
+        assert updated is not None
+        assert updated["actions"][-1] == "Тестовый шаг"
 
-def test_save_kb_writes_backup(temp_kb: Path) -> None:
-    data = knowledge.load_kb()
-    data["treatments"]["Лечение холеры"].append("Тестовый шаг")
-    knowledge.save_kb(data)
-
-    backup = Path(f"{temp_kb}.bak")
-    assert backup.exists()
-
-    new_payload = json.loads(temp_kb.read_text(encoding="utf-8"))
-    assert "Тестовый шаг" in new_payload["treatments"]["Лечение холеры"]
+        restored = service.update_treatment_actions(treatment["id"], original_actions)
+        assert restored is not None
+        assert restored["actions"] == original_actions

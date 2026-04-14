@@ -2,7 +2,7 @@
 import { getCharacteristics } from "../../api/client";
 
 export default function CharacteristicsTab() {
-  const [characteristics, setCharacteristics] = useState({});
+  const [characteristics, setCharacteristics] = useState([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -18,6 +18,7 @@ export default function CharacteristicsTab() {
       <table>
         <thead>
           <tr>
+            <th>ID</th>
             <th>Характеристика</th>
             <th>Тип</th>
             <th>Допустимые значения</th>
@@ -25,9 +26,10 @@ export default function CharacteristicsTab() {
           </tr>
         </thead>
         <tbody>
-          {Object.entries(characteristics).map(([name, item]) => (
-            <tr key={name}>
-              <td>{name}</td>
+          {characteristics.map((item) => (
+            <tr key={item.id}>
+              <td>{item.id}</td>
+              <td>{item.name}</td>
               <td>{item.type}</td>
               <td>
                 <code>

@@ -1,9 +1,13 @@
 ﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import knowledge, solver
+from app import db
+from app.config import get_seed_path
+from app.orm import Base
+from app.routers import characteristics, diagnoses, solver, treatments
+from app.services.knowledge_service import KnowledgeService
 
-app = FastAPI(title="Expert System API", version="1.0.0")
+app = FastAPI(title="Expert System API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,8 +16,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(diagnoses.router)
+app.include_router(characteristics.router)
+app.include_router(treatments.router)
 app.include_router(solver.router)
-app.include_router(knowledge.router)
+
+
+@app.on_event("startup")
+def startup() -> None:
+    # Backup safety for tests/local runs if migrations were not applied yet.
+    Base.metadata.create_all(bind=db.engine)
+    with db.SessionLocal() as session:
+        service = KnowledgeService(session)
+        service.seed_from_json_if_empty(get_seed_path())
 
 
 @app.get("/")

@@ -1,31 +1,31 @@
-﻿from pathlib import Path
+﻿def test_diagnoses_endpoint_returns_list(client) -> None:
+    response = client.get("/api/diagnoses")
 
-import pytest
-from fastapi.testclient import TestClient
-
-import main
-from app import knowledge
-
-
-@pytest.fixture()
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    source = Path(__file__).resolve().parents[1] / "data" / "knowledge_base.json"
-    target = tmp_path / "knowledge_base.json"
-    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    monkeypatch.setattr(knowledge, "KB_PATH", target)
-    return TestClient(main.app)
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert len(payload) == 9
 
 
-def test_solve_endpoint_success(client: TestClient) -> None:
+def test_solve_endpoint_success(client) -> None:
+    diagnoses = client.get("/api/diagnoses").json()
+    cholera = next(item for item in diagnoses if item["name"] == "Холера")
+    detail = client.get(f"/api/diagnoses/{cholera['id']}").json()
+
+    values = {}
+    for criterion in detail["criteria"]:
+        if criterion["characteristic_type"] == "range":
+            values[str(criterion["characteristic_id"])] = 36.5
+        elif criterion["characteristic_name"] == "Характер стула":
+            values[str(criterion["characteristic_id"])] = "1"
+        elif criterion["characteristic_name"] == "Боль в животе":
+            values[str(criterion["characteristic_id"])] = "0"
+
     response = client.post(
         "/api/solver/solve",
         json={
-            "diagnosis": "Холера",
-            "patient_values": {
-                "Температура тела": 36.5,
-                "Характер стула": "1",
-                "Боль в животе": "0",
-            },
+            "diagnosis_id": cholera["id"],
+            "patient_values": values,
         },
     )
 
@@ -35,15 +35,30 @@ def test_solve_endpoint_success(client: TestClient) -> None:
     assert payload["matched_count"] == payload["total_count"]
 
 
-def test_add_and_delete_diagnosis(client: TestClient) -> None:
+def test_create_and_delete_diagnosis(client) -> None:
+    treatments = client.get("/api/treatments").json()
+    characteristics = client.get("/api/characteristics").json()
+
+    cough = next(item for item in characteristics if item["name"] == "Кашель")
+    treatment = next(item for item in treatments if item["name"] == "Лечение не требуется")
+
     diagnosis = {
+        "name": "Тестовый",
         "icd10": "Z99",
-        "characteristics": {"Кашель": "1"},
-        "treatment": "Лечение не требуется",
+        "treatment_id": treatment["id"],
+        "criteria": [
+            {
+                "characteristic_id": cough["id"],
+                "expected_enum_key": "1",
+                "expected_min": None,
+                "expected_max": None,
+            }
+        ],
     }
 
-    created = client.post("/api/knowledge/diagnoses/Тестовый", json=diagnosis)
+    created = client.post("/api/diagnoses", json=diagnosis)
     assert created.status_code == 200
 
-    deleted = client.delete("/api/knowledge/diagnoses/Тестовый")
+    diagnosis_id = created.json()["id"]
+    deleted = client.delete(f"/api/diagnoses/{diagnosis_id}")
     assert deleted.status_code == 200

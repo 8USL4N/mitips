@@ -1,6 +1,7 @@
 ﻿export default function DiagnosisForm({
   diagnoses,
   characteristics,
+  selectedDiagnosisId,
   selectedDiagnosis,
   values,
   loading,
@@ -8,60 +9,62 @@
   onValuesChange,
   onSubmit
 }) {
-  const diagnosisChars = selectedDiagnosis
-    ? Object.keys(diagnoses[selectedDiagnosis]?.characteristics || {})
-    : [];
+  const criteria = selectedDiagnosis?.criteria || [];
 
   return (
     <div className="form-grid">
       <label>
         Диагноз
-        <select value={selectedDiagnosis} onChange={(e) => onDiagnosisChange(e.target.value)}>
+        <select value={selectedDiagnosisId} onChange={(e) => onDiagnosisChange(e.target.value)}>
           <option value="">-- Выберите диагноз --</option>
-          {Object.keys(diagnoses).map((name) => (
-            <option key={name} value={name}>
-              {name}
+          {diagnoses.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
             </option>
           ))}
         </select>
       </label>
 
-      {diagnosisChars.map((charName) => {
-        const charInfo = characteristics[charName];
-        if (!charInfo) {
+      {criteria.map((criterion) => {
+        const characteristic = characteristics[criterion.characteristic_id];
+        if (!characteristic) {
           return null;
         }
 
+        const valueKey = String(criterion.characteristic_id);
+
         return (
-          <label key={charName}>
-            {charName}
-            {charInfo.type === "range" ? (
+          <label key={criterion.id}>
+            {criterion.characteristic_name}
+            {characteristic.type === "range" ? (
               <input
                 type="number"
                 step="0.1"
-                min={charInfo.allowed[0]}
-                max={charInfo.allowed[1]}
-                value={values[charName] ?? ""}
+                min={characteristic.allowed[0]}
+                max={characteristic.allowed[1]}
+                value={values[valueKey] ?? ""}
                 onChange={(e) =>
                   onValuesChange({
                     ...values,
-                    [charName]: e.target.value
+                    [valueKey]: e.target.value
                   })
                 }
-                placeholder={`${charInfo.allowed[0]}–${charInfo.allowed[1]} ${charInfo.unit || ""}`}
+                placeholder={`${characteristic.allowed[0]}–${characteristic.allowed[1]} ${
+                  characteristic.unit || ""
+                }`}
               />
             ) : (
               <select
-                value={values[charName] ?? ""}
+                value={values[valueKey] ?? ""}
                 onChange={(e) =>
                   onValuesChange({
                     ...values,
-                    [charName]: e.target.value
+                    [valueKey]: e.target.value
                   })
                 }
               >
                 <option value="">-- выберите --</option>
-                {Object.entries(charInfo.allowed).map(([key, value]) => (
+                {Object.entries(characteristic.allowed).map(([key, value]) => (
                   <option key={key} value={key}>
                     {value}
                   </option>
@@ -72,7 +75,7 @@
         );
       })}
 
-      {selectedDiagnosis && (
+      {selectedDiagnosisId && (
         <button type="button" className="primary" onClick={onSubmit} disabled={loading}>
           {loading ? "Анализ..." : "Определить лечение"}
         </button>

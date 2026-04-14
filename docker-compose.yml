@@ -1,15 +1,35 @@
-﻿version: "3.9"
+﻿services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: expert_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-expert}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-expert}
+      POSTGRES_DB: ${POSTGRES_DB:-expert_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expert} -d ${POSTGRES_DB:-expert_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
 
-services:
   backend:
     build: ./backend
     container_name: expert_backend
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend/data:/app/data
     environment:
       - APP_ENV=development
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-expert}:${POSTGRES_PASSWORD:-expert}@postgres:5432/${POSTGRES_DB:-expert_db}
+      - KB_SEED_PATH=/app/data/knowledge_base.json
+      - KB_EXPORT_PATH=/app/data/knowledge_base.export.json
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -20,3 +40,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  postgres_data:

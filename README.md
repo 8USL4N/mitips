@@ -8,15 +8,15 @@
 
 ## Стек
 
-- Backend: Python 3.12, FastAPI
+- Backend: Python 3.12, FastAPI, SQLAlchemy, Alembic
 - Frontend: React 18, Vite
+- БД: PostgreSQL 16
 - Контейнеризация: Docker, Docker Compose
-- Хранилище знаний: JSON
 
 ## Запуск
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 Открыть:
@@ -24,18 +24,38 @@ docker compose up --build
 - Frontend: http://localhost:3000
 - Backend docs: http://localhost:8000/docs
 
-## Структура
+## Архитектура данных
 
-- `backend/` — API, решатель, доступ к базе знаний
-- `frontend/` — UI решателя и редактор базы знаний
-- `backend/data/knowledge_base.json` — база знаний
+- Runtime-хранилище: PostgreSQL
+- Seed-источник: `backend/data/knowledge_base.json`
+- JSON не используется как рабочая БД
+
+## Миграции
+
+В контейнере backend при старте автоматически выполняется:
+
+```bash
+alembic upgrade head
+```
 
 ## Тесты backend
 
-Локально (без Docker):
+```bash
+docker compose exec -T backend pytest -q
+```
+
+## Smoke-проверка
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1
+```
+
+Ожидаемый финал: `SMOKE RESULT: PASS`.
+
+## Экспорт БЗ в JSON
 
 ```bash
-cd backend
-pip install -r requirements.txt
-pytest
+docker compose exec -T backend python scripts/export_kb.py
 ```
+
+По умолчанию экспорт создаётся в `/app/data/knowledge_base.export.json` внутри контейнера.

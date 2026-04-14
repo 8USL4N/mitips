@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class CharacteristicSchema(BaseModel):
+class CharacteristicPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["range", "enum"]
@@ -12,13 +12,13 @@ class CharacteristicSchema(BaseModel):
     unit: str = ""
 
     @model_validator(mode="after")
-    def validate_consistency(self) -> "CharacteristicSchema":
+    def validate_consistency(self) -> "CharacteristicPayload":
         if self.type == "range":
             if not isinstance(self.allowed, list) or len(self.allowed) != 2:
                 raise ValueError("For range type, 'allowed' must contain [min, max]")
             if not isinstance(self.normal, list) or len(self.normal) != 2:
                 raise ValueError("For range type, 'normal' must contain [min, max]")
-        if self.type == "enum":
+        else:
             if not isinstance(self.allowed, dict):
                 raise ValueError("For enum type, 'allowed' must be a dictionary")
             if not isinstance(self.normal, str):
@@ -26,25 +26,61 @@ class CharacteristicSchema(BaseModel):
         return self
 
 
-class DiagnosisSchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class CharacteristicRead(CharacteristicPayload):
+    id: int
+    name: str
 
+
+class DiagnosisCriterionInput(BaseModel):
+    characteristic_id: int
+    expected_enum_key: str | None = None
+    expected_min: float | None = None
+    expected_max: float | None = None
+
+
+class DiagnosisCriterionRead(DiagnosisCriterionInput):
+    id: int
+    characteristic_name: str
+    characteristic_type: str
+
+
+class DiagnosisSummaryRead(BaseModel):
+    id: int
+    name: str
     icd10: str | None
-    characteristics: dict[str, str | list[float]]
-    treatment: str
+    treatment_id: int
+    treatment_name: str
 
 
-class KnowledgeBaseSchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class DiagnosisDetailRead(DiagnosisSummaryRead):
+    criteria: list[DiagnosisCriterionRead]
 
-    body_systems: dict[str, list[str]]
-    characteristics: dict[str, CharacteristicSchema]
-    diagnoses: dict[str, DiagnosisSchema]
-    treatments: dict[str, list[str]]
+
+class DiagnosisUpsertRequest(BaseModel):
+    name: str
+    icd10: str | None = None
+    treatment_id: int
+    criteria: list[DiagnosisCriterionInput] = Field(default_factory=list)
+
+
+class TreatmentRead(BaseModel):
+    id: int
+    name: str
+    actions: list[str]
+
+
+class TreatmentActionsUpdateRequest(BaseModel):
+    actions: list[str] = Field(default_factory=list)
+
+    @field_validator("actions")
+    @classmethod
+    def validate_actions(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item and item.strip()]
+        return cleaned
 
 
 class SolveRequest(BaseModel):
-    diagnosis: str
+    diagnosis_id: int
     patient_values: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -63,19 +99,3 @@ class SolveResponse(BaseModel):
     explanation: list[ExplanationRow]
     matched_count: int
     total_count: int
-
-
-class DiagnosisUpsertRequest(BaseModel):
-    icd10: str | None = None
-    characteristics: dict[str, str | list[float]] = Field(default_factory=dict)
-    treatment: str
-
-
-class TreatmentUpdateRequest(BaseModel):
-    actions: list[str] = Field(default_factory=list)
-
-    @field_validator("actions")
-    @classmethod
-    def validate_actions(cls, value: list[str]) -> list[str]:
-        cleaned = [item.strip() for item in value if item and item.strip()]
-        return cleaned

@@ -1,69 +1,83 @@
 ﻿from typing import Any
 
-from app.knowledge import load_kb
+from sqlalchemy.orm import Session
+
+from app.services.knowledge_service import KnowledgeService
 
 
-def _format_range(value: list[float], unit: str = "") -> str:
+def _format_range(min_value: float | None, max_value: float | None, unit: str = "") -> str:
+    if min_value is None or max_value is None:
+        return "не задано"
     unit_part = f" {unit}" if unit else ""
-    return f"{value[0]}–{value[1]}{unit_part}"
+    return f"{min_value}–{max_value}{unit_part}"
 
 
-def solve_validate_selected(diagnosis_name: str, patient_values: dict[str, Any]) -> dict[str, Any]:
-    kb = load_kb()
-
-    diagnosis = kb["diagnoses"].get(diagnosis_name)
+def solve_validate_selected(
+    session: Session,
+    diagnosis_id: int,
+    patient_values: dict[str, Any],
+) -> dict[str, Any]:
+    service = KnowledgeService(session)
+    diagnosis = service.get_solver_payload(diagnosis_id)
     if not diagnosis:
-        raise ValueError(f"Диагноз '{diagnosis_name}' не найден в базе знаний")
-
-    treatment_name = diagnosis["treatment"]
-    actions = kb["treatments"].get(treatment_name, [])
+        raise ValueError(f"Диагноз id={diagnosis_id} не найден в базе знаний")
 
     explanation: list[dict[str, Any]] = []
     matched_count = 0
+    characteristic_map = {item["id"]: item for item in service.list_characteristics()}
 
-    for char_name, expected in diagnosis["characteristics"].items():
-        char_info = kb["characteristics"].get(char_name)
-        actual = patient_values.get(char_name)
+    for criterion in diagnosis["criteria"]:
+        characteristic_id = criterion["characteristic_id"]
+        key = str(characteristic_id)
+        actual = patient_values.get(key)
 
-        if not char_info:
-            explanation.append(
-                {
-                    "characteristic": char_name,
-                    "expected": str(expected),
-                    "actual": actual,
-                    "match": False,
-                }
-            )
-            continue
-
-        if char_info["type"] == "range":
+        if criterion["characteristic_type"] == "range":
             try:
                 actual_float = float(actual)
-                match = float(expected[0]) <= actual_float <= float(expected[1])
+                expected_min = float(criterion["expected_min"])
+                expected_max = float(criterion["expected_max"])
+                match = expected_min <= actual_float <= expected_max
                 actual_view: float | None = actual_float
             except (TypeError, ValueError):
                 match = False
                 actual_view = None
 
-            expected_view = _format_range(expected, char_info.get("unit", ""))
             explanation.append(
                 {
-                    "characteristic": char_name,
-                    "expected": expected_view,
+                    "characteristic": criterion["characteristic_name"],
+                    "expected": _format_range(
+                        criterion["expected_min"],
+                        criterion["expected_max"],
+                        criterion.get("characteristic_unit") or "",
+                    ),
                     "actual": actual_view,
                     "match": match,
                 }
             )
         else:
-            allowed = char_info.get("allowed", {})
-            expected_key = str(expected)
+            expected_key = criterion["expected_enum_key"]
+
+            characteristic = characteristic_map.get(criterion["characteristic_id"])
+            if not characteristic:
+                explanation.append(
+                    {
+                        "characteristic": criterion["characteristic_name"],
+                        "expected": str(expected_key),
+                        "actual": actual,
+                        "match": False,
+                    }
+                )
+                continue
+            allowed = characteristic["allowed"] if isinstance(characteristic["allowed"], dict) else {}
+
             actual_key = str(actual) if actual is not None else ""
-            expected_view = allowed.get(expected_key, expected_key)
+            expected_view = allowed.get(str(expected_key), str(expected_key))
             actual_view = allowed.get(actual_key, "не указано" if actual is None else actual_key)
-            match = actual_key == expected_key
+            match = actual_key == str(expected_key)
+
             explanation.append(
                 {
-                    "characteristic": char_name,
+                    "characteristic": criterion["characteristic_name"],
                     "expected": expected_view,
                     "actual": actual_view,
                     "match": match,
@@ -74,26 +88,25 @@ def solve_validate_selected(diagnosis_name: str, patient_values: dict[str, Any])
             matched_count += 1
 
     return {
-        "diagnosis": diagnosis_name,
+        "diagnosis": diagnosis["name"],
         "icd10": diagnosis.get("icd10"),
-        "treatment_name": treatment_name,
-        "actions": actions,
+        "treatment_name": diagnosis["treatment_name"],
+        "actions": diagnosis["actions"],
         "explanation": explanation,
         "matched_count": matched_count,
         "total_count": len(explanation),
     }
 
 
-def rank_all(patient_values: dict[str, Any]) -> list[dict[str, Any]]:
-    """Non-MVP helper: score every diagnosis by number of matched characteristics."""
-    kb = load_kb()
+def rank_all(session: Session, patient_values: dict[str, Any]) -> list[dict[str, Any]]:
+    service = KnowledgeService(session)
     results = []
 
-    for diagnosis_name in kb["diagnoses"].keys():
-        solved = solve_validate_selected(diagnosis_name, patient_values)
+    for diagnosis in service.list_diagnoses():
+        solved = solve_validate_selected(session, diagnosis["id"], patient_values)
         total = max(solved["total_count"], 1)
         score = solved["matched_count"] / total
-        results.append({"diagnosis": diagnosis_name, "score": round(score, 3), **solved})
+        results.append({"diagnosis_id": diagnosis["id"], "score": round(score, 3), **solved})
 
     results.sort(key=lambda item: item["score"], reverse=True)
     return results
