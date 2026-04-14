@@ -8,7 +8,6 @@ export default function App() {
       <header className="topbar">
         <div>
           <h1>Экспертная система</h1>
-          <p>Учебный MVP по инфекционным заболеваниям</p>
         </div>
         <nav className="nav-tabs">
           <NavLink to="/" end>
@@ -17,10 +16,6 @@ export default function App() {
           <NavLink to="/editor">Редактор знаний</NavLink>
         </nav>
       </header>
-
-      <div className="disclaimer">
-        Важно: система учебная, не предназначена для клинической диагностики.
-      </div>
 
       <main>
         <Routes>
