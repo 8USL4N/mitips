@@ -1,0 +1,22 @@
+﻿version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: expert_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - APP_ENV=development
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: expert_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
