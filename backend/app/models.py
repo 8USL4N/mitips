@@ -31,6 +31,29 @@ class CharacteristicRead(CharacteristicPayload):
     name: str
 
 
+class BodySystemRead(BaseModel):
+    id: int
+    name: str
+    characteristic_ids: list[int] = Field(default_factory=list)
+
+
+class BodySystemUpsertRequest(BaseModel):
+    name: str
+    characteristic_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("characteristic_ids")
+    @classmethod
+    def validate_characteristic_ids(cls, value: list[int]) -> list[int]:
+        seen = set()
+        unique_values: list[int] = []
+        for item in value:
+            if item in seen:
+                continue
+            seen.add(item)
+            unique_values.append(item)
+        return unique_values
+
+
 class DiagnosisCriterionInput(BaseModel):
     characteristic_id: int
     expected_enum_key: str | None = None
@@ -99,3 +122,27 @@ class SolveResponse(BaseModel):
     explanation: list[ExplanationRow]
     matched_count: int
     total_count: int
+
+
+class SolveBySymptomsRequest(BaseModel):
+    patient_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiagnosisHypothesis(BaseModel):
+    diagnosis_id: int
+    diagnosis: str
+    icd10: str | None
+    treatment_name: str
+    actions: list[str]
+    explanation: list[ExplanationRow]
+    matched_count: int
+    answered_count: int
+    total_count: int
+    missing_characteristics: list[str]
+
+
+class SolveBySymptomsResponse(BaseModel):
+    status: Literal["determined", "likely", "ambiguous", "not_determined"]
+    message: str
+    primary: DiagnosisHypothesis | None
+    alternatives: list[DiagnosisHypothesis] = Field(default_factory=list)

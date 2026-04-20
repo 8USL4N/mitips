@@ -71,9 +71,23 @@ class KnowledgeService:
             "treatment_name": item.treatment.name,
         }
 
+    @staticmethod
+    def _serialize_body_system(item) -> dict[str, Any]:
+        characteristic_ids = [link.characteristic_id for link in item.characteristics]
+        characteristic_ids.sort()
+        return {
+            "id": item.id,
+            "name": item.name,
+            "characteristic_ids": characteristic_ids,
+        }
+
     def list_diagnoses(self) -> list[dict[str, Any]]:
         rows = self.repo.list_diagnoses()
         return [self._serialize_diagnosis_summary(row) for row in rows]
+
+    def list_body_systems(self) -> list[dict[str, Any]]:
+        rows = self.repo.list_body_systems()
+        return [self._serialize_body_system(row) for row in rows]
 
     def get_diagnosis_detail(self, diagnosis_id: int) -> dict[str, Any] | None:
         row = self.repo.get_diagnosis(diagnosis_id)
@@ -93,6 +107,78 @@ class KnowledgeService:
     def list_treatments(self) -> list[dict[str, Any]]:
         rows = self.repo.list_treatments()
         return [self._serialize_treatment(row) for row in rows]
+
+    def _validate_body_system_characteristics(self, characteristic_ids: list[int]) -> None:
+        if not characteristic_ids:
+            return
+        mapped = self.repo.get_characteristics_by_ids(characteristic_ids)
+        if len(mapped) != len(set(characteristic_ids)):
+            raise ValueError("Одна или несколько характеристик не найдены")
+
+    def create_body_system(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.repo.get_body_system_by_name(payload["name"]):
+            raise ValueError("Система организма с таким названием уже существует")
+
+        characteristic_ids = payload.get("characteristic_ids", [])
+        self._validate_body_system_characteristics(characteristic_ids)
+
+        body_system = self.repo.create_body_system(payload["name"])
+        for characteristic_id in characteristic_ids:
+            self.repo.add_body_system_characteristic(
+                body_system_id=body_system.id,
+                characteristic_id=characteristic_id,
+            )
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось сохранить систему организма")
+
+        created = self.repo.get_body_system(body_system.id)
+        if not created:
+            raise ValueError("Не удалось загрузить созданную систему организма")
+        return self._serialize_body_system(created)
+
+    def update_body_system(self, body_system_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+        body_system = self.repo.get_body_system(body_system_id)
+        if not body_system:
+            return None
+
+        duplicate = self.repo.get_body_system_by_name(payload["name"])
+        if duplicate and duplicate.id != body_system_id:
+            raise ValueError("Система организма с таким названием уже существует")
+
+        characteristic_ids = payload.get("characteristic_ids", [])
+        self._validate_body_system_characteristics(characteristic_ids)
+
+        body_system.name = payload["name"]
+        self.repo.clear_body_system_characteristics(body_system.id)
+        for characteristic_id in characteristic_ids:
+            self.repo.add_body_system_characteristic(
+                body_system_id=body_system.id,
+                characteristic_id=characteristic_id,
+            )
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось обновить систему организма")
+
+        updated = self.repo.get_body_system(body_system.id)
+        if not updated:
+            return None
+        return self._serialize_body_system(updated)
+
+    def delete_body_system(self, body_system_id: int) -> bool:
+        body_system = self.repo.get_body_system(body_system_id)
+        if not body_system:
+            return False
+
+        self.repo.delete_body_system(body_system)
+        self.repo.commit()
+        return True
 
     def _validate_criteria_payload(self, criteria: list[dict[str, Any]]) -> None:
         if not criteria:

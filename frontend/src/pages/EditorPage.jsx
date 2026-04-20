@@ -1,12 +1,20 @@
-﻿import { useState } from "react";
+import { useState } from "react";
+import BodySystemsTab from "../components/KnowledgeEditor/BodySystemsTab";
+import CharacteristicsTab from "../components/KnowledgeEditor/CharacteristicsTab";
 import DiagnosesTab from "../components/KnowledgeEditor/DiagnosesTab";
 import TreatmentsTab from "../components/KnowledgeEditor/TreatmentsTab";
-import CharacteristicsTab from "../components/KnowledgeEditor/CharacteristicsTab";
+import ValidationTab from "../components/KnowledgeEditor/ValidationTab";
 
-const TABS = ["Диагнозы", "Лечения", "Характеристики"];
+const TABS = [
+  "Системы организма",
+  "Характеристики",
+  "Диагнозы",
+  "Лечения",
+  "Проверка эталона"
+];
 
 export default function EditorPage() {
-  const [activeTab, setActiveTab] = useState("Диагнозы");
+  const [activeTab, setActiveTab] = useState("Системы организма");
 
   return (
     <section className="panel">
@@ -24,9 +32,11 @@ export default function EditorPage() {
         ))}
       </div>
 
+      {activeTab === "Системы организма" && <BodySystemsTab />}
+      {activeTab === "Характеристики" && <CharacteristicsTab />}
       {activeTab === "Диагнозы" && <DiagnosesTab />}
       {activeTab === "Лечения" && <TreatmentsTab />}
-      {activeTab === "Характеристики" && <CharacteristicsTab />}
+      {activeTab === "Проверка эталона" && <ValidationTab />}
     </section>
   );
 }

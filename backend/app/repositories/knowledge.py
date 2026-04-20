@@ -52,6 +52,25 @@ class KnowledgeRepository:
         )
         return list(self.session.scalars(statement).unique().all())
 
+    def list_body_systems(self) -> list[BodySystem]:
+        statement = (
+            select(BodySystem)
+            .options(joinedload(BodySystem.characteristics).joinedload(BodySystemCharacteristic.characteristic))
+            .order_by(BodySystem.name)
+        )
+        return list(self.session.scalars(statement).unique().all())
+
+    def get_body_system(self, body_system_id: int) -> BodySystem | None:
+        statement = (
+            select(BodySystem)
+            .where(BodySystem.id == body_system_id)
+            .options(joinedload(BodySystem.characteristics).joinedload(BodySystemCharacteristic.characteristic))
+        )
+        return self.session.scalar(statement)
+
+    def get_body_system_by_name(self, name: str) -> BodySystem | None:
+        return self.session.scalar(select(BodySystem).where(BodySystem.name == name))
+
     def get_characteristics_by_ids(self, ids: list[int]) -> dict[int, Characteristic]:
         if not ids:
             return {}
@@ -144,6 +163,11 @@ class KnowledgeRepository:
         self.session.flush()
         return relation
 
+    def clear_body_system_characteristics(self, body_system_id: int) -> None:
+        self.session.execute(
+            delete(BodySystemCharacteristic).where(BodySystemCharacteristic.body_system_id == body_system_id)
+        )
+
     def create_treatment(self, name: str) -> Treatment:
         treatment = Treatment(name=name)
         self.session.add(treatment)
@@ -190,6 +214,9 @@ class KnowledgeRepository:
 
     def delete_diagnosis(self, diagnosis: Diagnosis) -> None:
         self.session.delete(diagnosis)
+
+    def delete_body_system(self, body_system: BodySystem) -> None:
+        self.session.delete(body_system)
 
     def commit(self) -> None:
         self.session.commit()

@@ -27,3 +27,31 @@ def test_update_treatment_actions_persists(client) -> None:
         restored = service.update_treatment_actions(treatment["id"], original_actions)
         assert restored is not None
         assert restored["actions"] == original_actions
+
+
+def test_body_systems_crud(client) -> None:
+    characteristics = client.get("/api/characteristics").json()
+    temp = next(item for item in characteristics if item["name"] == "Температура тела")
+    cough = next(item for item in characteristics if item["name"] == "Кашель")
+
+    list_response = client.get("/api/body-systems")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) >= 5
+
+    created = client.post(
+        "/api/body-systems",
+        json={"name": "Тестовая система", "characteristic_ids": [temp["id"]]},
+    )
+    assert created.status_code == 200
+    body_system_id = created.json()["id"]
+    assert created.json()["characteristic_ids"] == [temp["id"]]
+
+    updated = client.put(
+        f"/api/body-systems/{body_system_id}",
+        json={"name": "Тестовая система 2", "characteristic_ids": [temp["id"], cough["id"]]},
+    )
+    assert updated.status_code == 200
+    assert sorted(updated.json()["characteristic_ids"]) == sorted([temp["id"], cough["id"]])
+
+    deleted = client.delete(f"/api/body-systems/{body_system_id}")
+    assert deleted.status_code == 200

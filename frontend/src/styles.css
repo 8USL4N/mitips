@@ -177,6 +177,45 @@ button:disabled {
   padding-top: 14px;
 }
 
+.result-card {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.status-banner {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.status-determined {
+  background: #e9f8ee;
+  border: 1px solid #9dd5ac;
+  color: #1d5f2a;
+}
+
+.status-likely {
+  background: #fff7df;
+  border: 1px solid #efcd6f;
+  color: #725817;
+}
+
+.status-ambiguous {
+  background: #fff1e3;
+  border: 1px solid #f3bb7a;
+  color: #844c0c;
+}
+
+.status-not_determined {
+  background: #eef3f6;
+  border: 1px solid #c7d5dd;
+  color: #375564;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -218,6 +257,60 @@ td {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.solver-layout {
+  display: grid;
+  gap: 12px;
+}
+
+.system-block {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfdff;
+}
+
+.system-block h4 {
+  margin: 0 0 8px;
+}
+
+.accordion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.accordion-list details {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+}
+
+.accordion-list summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
 }
 
 .steps {

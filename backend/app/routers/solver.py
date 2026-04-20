@@ -1,9 +1,9 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import SolveRequest, SolveResponse
-from app.solver import rank_all, solve_validate_selected
+from app.models import SolveBySymptomsRequest, SolveBySymptomsResponse, SolveRequest, SolveResponse
+from app.solver import solve_by_symptoms, solve_validate_selected
 
 router = APIRouter(prefix="/api/solver", tags=["solver"])
 
@@ -20,10 +20,13 @@ def solve_task(
     return SolveResponse.model_validate(result)
 
 
-@router.post("/rank")
-def rank_task(
-    payload: SolveRequest,
+@router.post("/determine", response_model=SolveBySymptomsResponse)
+def determine_task(
+    payload: SolveBySymptomsRequest,
     session: Session = Depends(get_session),
-) -> dict[str, list[dict]]:
-    ranked = rank_all(session, payload.patient_values)
-    return {"items": ranked[:3]}
+) -> SolveBySymptomsResponse:
+    try:
+        result = solve_by_symptoms(session, payload.patient_values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SolveBySymptomsResponse.model_validate(result)

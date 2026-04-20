@@ -1,3 +1,3 @@
-﻿from . import characteristics, diagnoses, solver, treatments
+from . import body_systems, characteristics, diagnoses, solver, treatments
 
-__all__ = ["diagnoses", "characteristics", "treatments", "solver"]
+__all__ = ["diagnoses", "characteristics", "treatments", "body_systems", "solver"]

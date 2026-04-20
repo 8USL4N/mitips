@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import db
 from app.config import get_seed_path
 from app.orm import Base
-from app.routers import characteristics, diagnoses, solver, treatments
+from app.routers import body_systems, characteristics, diagnoses, solver, treatments
 from app.services.knowledge_service import KnowledgeService
 
 app = FastAPI(title="Expert System API", version="2.0.0")
@@ -19,6 +19,7 @@ app.add_middleware(
 app.include_router(diagnoses.router)
 app.include_router(characteristics.router)
 app.include_router(treatments.router)
+app.include_router(body_systems.router)
 app.include_router(solver.router)
 
 
