@@ -46,13 +46,23 @@ function HypothesisCard({ item, title }) {
 }
 
 function selectionMethodLabel(method) {
-  if (method === "ml") {
-    return "ML-модель";
+  if (method === "neural") {
+    return "Нейронная сеть";
   }
   if (method === "rules") {
     return "Правила";
   }
   return "Fallback";
+}
+
+function sourceLabel(source) {
+  if (source === "neural") {
+    return "Нейронная сеть";
+  }
+  if (source === "rules") {
+    return "Правила";
+  }
+  return source;
 }
 
 export default function DiagnosisResult({ result }) {
@@ -68,9 +78,9 @@ export default function DiagnosisResult({ result }) {
     <div className="result-block">
       <div className={statusClass}>{result.message}</div>
 
-      {result.status === "ml_selected" && (
+      {result.status === "neural_selected" && (
         <div className="alert">
-          Найдено несколько подходящих диагнозов. Модель выбрала наиболее вероятный.
+          Найдено несколько подходящих диагнозов. Нейронная сеть выбрала наиболее вероятный.
         </div>
       )}
 
@@ -102,7 +112,7 @@ export default function DiagnosisResult({ result }) {
                 <tr key={item.diagnosis_id}>
                   <td>{item.diagnosis}</td>
                   <td>{Math.round(item.score * 100)}%</td>
-                  <td>{item.source}</td>
+                  <td>{sourceLabel(item.source)}</td>
                 </tr>
               ))}
             </tbody>

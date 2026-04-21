@@ -1,4 +1,4 @@
-﻿"""Application configuration helpers."""
+"""Application configuration helpers."""
 
 from pathlib import Path
 import os
@@ -6,6 +6,7 @@ import os
 
 DEFAULT_SEED_PATH = Path("/app/data/knowledge_base.json")
 DEFAULT_EXPORT_PATH = Path("/app/data/knowledge_base.export.json")
+DEFAULT_MODEL_DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "model-data.json"
 DEFAULT_DATABASE_URL = "sqlite:///./expert.db"
 
 
@@ -25,3 +26,10 @@ def get_export_path() -> Path:
     if raw:
         return Path(raw)
     return DEFAULT_EXPORT_PATH
+
+
+def get_model_data_path() -> Path:
+    raw = os.getenv("MODEL_DATA_PATH")
+    if raw:
+        return Path(raw)
+    return DEFAULT_MODEL_DATA_PATH

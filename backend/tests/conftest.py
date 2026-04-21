@@ -14,6 +14,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     db_path = tmp_path / "test.sqlite3"
     db_url = f"sqlite:///{db_path.as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("MODEL_DATA_PATH", str(tmp_path / "model-data.json"))
 
     db.reconfigure_engine(db_url)
     Base.metadata.drop_all(bind=db.engine)

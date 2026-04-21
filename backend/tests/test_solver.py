@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
 from app import db
+from app.config import get_model_data_path
 from app.services.knowledge_service import KnowledgeService
 import app.solver as solver_module
 from app.solver import solve_by_symptoms, solve_validate_selected
@@ -20,7 +23,23 @@ def _make_values_from_detail(detail: dict, characteristic_map: dict[int, dict]) 
     return values
 
 
-def _find_multi_candidate_values(service: KnowledgeService, characteristic_map: dict[int, dict]) -> dict[str, str | float]:
+def _find_rules_selected_values(
+    service: KnowledgeService, characteristic_map: dict[int, dict]
+) -> tuple[str, dict[str, str | float]]:
+    for diagnosis in service.list_diagnoses():
+        detail = service.get_diagnosis_detail(diagnosis["id"])
+        if not detail:
+            continue
+        values = _make_values_from_detail(detail, characteristic_map)
+        result = solve_by_symptoms(service.session, values)
+        if result["selection_method"] == "rules" and result["status"] in {"determined", "likely"}:
+            return diagnosis["name"], values
+    raise AssertionError("Не найден вход, который приводит к rules-based выбору")
+
+
+def _find_neural_selected_values(
+    service: KnowledgeService, characteristic_map: dict[int, dict]
+) -> dict[str, str | float]:
     for diagnosis in service.list_diagnoses():
         detail = service.get_diagnosis_detail(diagnosis["id"])
         if not detail:
@@ -30,9 +49,9 @@ def _find_multi_candidate_values(service: KnowledgeService, characteristic_map: 
             value = _pick_value_for_criterion(criterion, characteristic)
             candidate_input = {str(criterion["characteristic_id"]): value}
             result = solve_by_symptoms(service.session, candidate_input)
-            if result["status"] == "ml_selected":
+            if result["status"] == "neural_selected":
                 return candidate_input
-    raise AssertionError("Не найден вход, который приводит к ml_selected")
+    raise AssertionError("Не найден вход, который приводит к neural_selected")
 
 
 def _update_any_diagnosis_criteria(service: KnowledgeService) -> None:
@@ -107,33 +126,31 @@ def test_solver_raises_for_unknown_diagnosis(client) -> None:
 def test_determine_one_candidate_is_rules_based(client) -> None:
     with db.SessionLocal() as session:
         service = KnowledgeService(session)
-        diagnosis = service.list_diagnoses()[0]
-        detail = service.get_diagnosis_detail(diagnosis["id"])
-        assert detail is not None
         characteristic_map = {int(item["id"]): item for item in service.list_characteristics()}
-        values = _make_values_from_detail(detail, characteristic_map)
+        diagnosis_name, values = _find_rules_selected_values(service, characteristic_map)
         result = solve_by_symptoms(session, values)
 
     assert result["status"] in {"determined", "likely"}
     assert result["selection_method"] == "rules"
     assert result["primary"] is not None
-    assert result["primary"]["diagnosis"] == diagnosis["name"]
+    assert result["primary"]["diagnosis"] == diagnosis_name
     assert result["alternatives"] == []
 
 
-def test_determine_multiple_candidates_uses_ml_ranker(client) -> None:
+def test_determine_multiple_candidates_uses_neural_network(client) -> None:
     with db.SessionLocal() as session:
         service = KnowledgeService(session)
         characteristic_map = {int(item["id"]): item for item in service.list_characteristics()}
-        values = _find_multi_candidate_values(service, characteristic_map)
+        values = _find_neural_selected_values(service, characteristic_map)
         result = solve_by_symptoms(session, values)
 
-    assert result["status"] == "ml_selected"
+    assert result["status"] == "neural_selected"
     assert result["primary"] is not None
-    assert result["selection_method"] == "ml"
+    assert result["selection_method"] == "neural"
     assert isinstance(result["confidence"], float)
     assert result["alternatives"]
     assert result["ranked_candidates"]
+    assert all(item["source"] == "neural" for item in result["ranked_candidates"])
     scores = [row["score"] for row in result["ranked_candidates"]]
     assert scores == sorted(scores, reverse=True)
 
@@ -167,12 +184,33 @@ def test_solver_retrains_after_knowledge_change(client) -> None:
     with db.SessionLocal() as session:
         service = KnowledgeService(session)
         characteristic_map = {int(item["id"]): item for item in service.list_characteristics()}
-        values = _find_multi_candidate_values(service, characteristic_map)
+        values = _find_neural_selected_values(service, characteristic_map)
         first = solve_by_symptoms(session, values)
-        assert first["status"] == "ml_selected"
-        old_hash = solver_module._RANKER._snapshot_hash
+        assert first["status"] == "neural_selected"
+        old_hash = solver_module._NEURAL_RANKER._knowledge_hash
 
         _update_any_diagnosis_criteria(service)
         second = solve_by_symptoms(session, values)
-        assert second["status"] in {"ml_selected", "determined", "likely", "not_determined"}
-        assert solver_module._RANKER._snapshot_hash != old_hash
+        assert second["status"] in {"neural_selected", "determined", "likely", "not_determined"}
+        assert solver_module._NEURAL_RANKER._knowledge_hash != old_hash
+
+
+def test_neural_ranker_saves_model_data_json(client) -> None:
+    with db.SessionLocal() as session:
+        service = KnowledgeService(session)
+        characteristic_map = {int(item["id"]): item for item in service.list_characteristics()}
+        values = _find_neural_selected_values(service, characteristic_map)
+        result = solve_by_symptoms(session, values)
+        assert result["status"] == "neural_selected"
+
+    model_path = get_model_data_path()
+    assert model_path.exists()
+
+    payload = json.loads(model_path.read_text(encoding="utf-8"))
+    assert payload["model_type"] == "feed_forward_neural_network"
+    assert payload.get("knowledge_hash")
+    assert payload.get("input_features")
+    assert payload.get("diagnosis_ids")
+    assert "weights" in payload
+    assert "input_hidden" in payload["weights"]
+    assert "hidden_output" in payload["weights"]

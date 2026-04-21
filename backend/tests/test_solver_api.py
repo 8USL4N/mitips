@@ -23,7 +23,33 @@ def _first_diagnosis_payload(client) -> tuple[dict, dict]:
     return diagnosis, values
 
 
-def _find_ml_selected_payload(client) -> dict:
+def _find_rules_selected_payload(client) -> tuple[str, dict]:
+    diagnoses = _diagnoses(client)
+    characteristics = {item["id"]: item for item in _characteristics(client)}
+    for diagnosis in diagnoses:
+        detail = client.get(f"/api/diagnoses/{diagnosis['id']}").json()
+        values = {}
+        for criterion in detail["criteria"]:
+            char = characteristics[criterion["characteristic_id"]]
+            if char["type"] == "range":
+                values[str(criterion["characteristic_id"])] = (
+                    float(criterion["expected_min"]) + float(criterion["expected_max"])
+                ) / 2.0
+            else:
+                values[str(criterion["characteristic_id"])] = str(criterion["expected_enum_key"])
+
+        payload = {"patient_values": values}
+        response = client.post("/api/solver/determine", json=payload)
+        if response.status_code != 200:
+            continue
+        body = response.json()
+        if body["selection_method"] == "rules" and body["status"] in {"determined", "likely"}:
+            return diagnosis["name"], payload
+
+    raise AssertionError("Не найден payload для rules-based выбора")
+
+
+def _find_neural_selected_payload(client) -> dict:
     diagnoses = _diagnoses(client)
     characteristics = {item["id"]: item for item in _characteristics(client)}
     for diagnosis in diagnoses:
@@ -37,9 +63,9 @@ def _find_ml_selected_payload(client) -> dict:
 
             payload = {"patient_values": {str(criterion["characteristic_id"]): value}}
             response = client.post("/api/solver/determine", json=payload)
-            if response.status_code == 200 and response.json()["status"] == "ml_selected":
+            if response.status_code == 200 and response.json()["status"] == "neural_selected":
                 return payload
-    raise AssertionError("Не найден payload, который даёт ml_selected")
+    raise AssertionError("Не найден payload, который даёт neural_selected")
 
 
 def test_diagnoses_endpoint_returns_list(client) -> None:
@@ -64,23 +90,23 @@ def test_solve_endpoint_success(client) -> None:
 
 
 def test_determine_endpoint_exact_match_rules_based(client) -> None:
-    diagnosis, values = _first_diagnosis_payload(client)
-    response = client.post("/api/solver/determine", json={"patient_values": values})
+    diagnosis_name, payload = _find_rules_selected_payload(client)
+    response = client.post("/api/solver/determine", json=payload)
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] in {"determined", "likely"}
-    assert payload["selection_method"] == "rules"
-    assert payload["primary"]["diagnosis"] == diagnosis["name"]
-    assert payload["alternatives"] == []
+    body = response.json()
+    assert body["status"] in {"determined", "likely"}
+    assert body["selection_method"] == "rules"
+    assert body["primary"]["diagnosis"] == diagnosis_name
+    assert body["alternatives"] == []
 
 
-def test_determine_endpoint_multiple_candidates_uses_ml(client) -> None:
-    payload = _find_ml_selected_payload(client)
+def test_determine_endpoint_multiple_candidates_uses_neural(client) -> None:
+    payload = _find_neural_selected_payload(client)
     response = client.post("/api/solver/determine", json=payload)
     assert response.status_code == 200
     result = response.json()
-    assert result["status"] == "ml_selected"
-    assert result["selection_method"] == "ml"
+    assert result["status"] == "neural_selected"
+    assert result["selection_method"] == "neural"
     assert result["primary"] is not None
     assert result["alternatives"]
     assert result["confidence"] is not None

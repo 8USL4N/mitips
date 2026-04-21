@@ -2,10 +2,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.ml import DiagnosisRanker
+from app.neural import NeuralDiagnosisRanker
 from app.services.knowledge_service import KnowledgeService
 
-_RANKER = DiagnosisRanker()
+_NEURAL_RANKER = NeuralDiagnosisRanker()
 
 
 def _format_range(min_value: float | None, max_value: float | None, unit: str = "") -> str:
@@ -401,21 +401,40 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             "diagnoses": diagnoses,
         }
         candidate_ids = [int(item["diagnosis_id"]) for item in candidates]
-        ranked = _RANKER.rank(
+        ranked = _NEURAL_RANKER.rank(
             patient_values=cleaned_values,
             candidate_ids=candidate_ids,
             knowledge_snapshot=snapshot,
         )
         if not ranked:
-            ranked = sorted(candidates, key=lambda item: item["rule_score"], reverse=True)
-            ranked = [
+            fallback_rows = sorted(candidates, key=lambda item: item["rule_score"], reverse=True)[:3]
+            fallback_alternatives = [
+                _build_hypothesis(
+                    diagnosis=diagnosis_by_id[int(item["diagnosis_id"])],
+                    patient_values=cleaned_values,
+                    characteristic_map=characteristic_map,
+                    answered_count=item["answered_count"],
+                )
+                for item in fallback_rows
+            ]
+            fallback_ranked = [
                 {
                     "diagnosis_id": int(item["diagnosis_id"]),
-                    "probability": float(item["rule_score"]),
-                    "model_score": float(item["rule_score"]),
+                    "diagnosis": diagnosis_by_id[int(item["diagnosis_id"])]["name"],
+                    "score": float(max(0.0, item["rule_score"])),
+                    "source": "rules",
                 }
-                for item in ranked
+                for item in fallback_rows
             ]
+            return {
+                "status": "not_determined",
+                "message": "Не удалось выполнить нейросетевой выбор. Показаны наиболее близкие гипотезы.",
+                "primary": None,
+                "alternatives": fallback_alternatives,
+                "selection_method": "fallback",
+                "confidence": None,
+                "ranked_candidates": fallback_ranked,
+            }
 
         candidate_stats = {int(item["diagnosis_id"]): item for item in candidates}
         primary_id = int(ranked[0]["diagnosis_id"])
@@ -442,17 +461,17 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 "diagnosis_id": int(row["diagnosis_id"]),
                 "diagnosis": diagnosis_by_id[int(row["diagnosis_id"])]["name"],
                 "score": float(row["probability"]),
-                "source": "ml",
+                "source": "neural",
             }
             for row in ranked
         ]
 
         return {
-            "status": "ml_selected",
-            "message": "Найдено несколько подходящих диагнозов. Модель выбрала наиболее вероятный.",
+            "status": "neural_selected",
+            "message": "Найдено несколько подходящих диагнозов. Нейронная сеть выбрала наиболее вероятный.",
             "primary": primary_hypothesis,
             "alternatives": alternatives,
-            "selection_method": "ml",
+            "selection_method": "neural",
             "confidence": float(ranked[0]["probability"]),
             "ranked_candidates": ranked_candidates,
         }

@@ -5,18 +5,18 @@ import DiagnosesTab from "../components/KnowledgeEditor/DiagnosesTab";
 import TreatmentsTab from "../components/KnowledgeEditor/TreatmentsTab";
 
 const TABS = [
-  "РЎРёСЃС‚РµРјС‹ РѕСЂРіР°РЅРёР·РјР°",
-  "РҐР°СЂР°РєС‚РµСЂРёСЃС‚РёРєРё",
-  "Р”РёР°РіРЅРѕР·С‹",
-  "Р›РµС‡РµРЅРёСЏ"
+  "Системы организма",
+  "Характеристики",
+  "Диагнозы",
+  "Лечения"
 ];
 
 export default function EditorPage() {
-  const [activeTab, setActiveTab] = useState("РЎРёСЃС‚РµРјС‹ РѕСЂРіР°РЅРёР·РјР°");
+  const [activeTab, setActiveTab] = useState("Системы организма");
 
   return (
     <section className="panel">
-      <h2>Р РµРґР°РєС‚РѕСЂ Р±Р°Р·С‹ Р·РЅР°РЅРёР№</h2>
+      <h2>Редактор базы знаний</h2>
       <div className="tab-row">
         {TABS.map((tab) => (
           <button
@@ -30,10 +30,10 @@ export default function EditorPage() {
         ))}
       </div>
 
-      {activeTab === "РЎРёСЃС‚РµРјС‹ РѕСЂРіР°РЅРёР·РјР°" && <BodySystemsTab />}
-      {activeTab === "РҐР°СЂР°РєС‚РµСЂРёСЃС‚РёРєРё" && <CharacteristicsTab />}
-      {activeTab === "Р”РёР°РіРЅРѕР·С‹" && <DiagnosesTab />}
-      {activeTab === "Р›РµС‡РµРЅРёСЏ" && <TreatmentsTab />}
+      {activeTab === "Системы организма" && <BodySystemsTab />}
+      {activeTab === "Характеристики" && <CharacteristicsTab />}
+      {activeTab === "Диагнозы" && <DiagnosesTab />}
+      {activeTab === "Лечения" && <TreatmentsTab />}
     </section>
   );
 }
