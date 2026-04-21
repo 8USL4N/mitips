@@ -108,6 +108,271 @@ class KnowledgeService:
         rows = self.repo.list_treatments()
         return [self._serialize_treatment(row) for row in rows]
 
+    @staticmethod
+    def _parse_float(value: Any, field_name: str) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Поле '{field_name}' должно быть числом") from exc
+
+    @classmethod
+    def _normalize_characteristic_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("Название характеристики обязательно")
+
+        type_name = payload.get("type")
+        if type_name not in {"range", "enum"}:
+            raise ValueError("type должен быть 'range' или 'enum'")
+
+        unit = str(payload.get("unit", "") or "").strip()
+        allowed = payload.get("allowed")
+        normal = payload.get("normal")
+
+        if type_name == "range":
+            if not isinstance(allowed, list) or len(allowed) != 2:
+                raise ValueError("Для range 'allowed' должен быть массивом из двух чисел [min, max]")
+            if not isinstance(normal, list) or len(normal) != 2:
+                raise ValueError("Для range 'normal' должен быть массивом из двух чисел [min, max]")
+
+            allowed_min = cls._parse_float(allowed[0], "allowed[0]")
+            allowed_max = cls._parse_float(allowed[1], "allowed[1]")
+            normal_min = cls._parse_float(normal[0], "normal[0]")
+            normal_max = cls._parse_float(normal[1], "normal[1]")
+
+            if allowed_min > allowed_max:
+                raise ValueError("allowed_min не может быть больше allowed_max")
+            if normal_min > normal_max:
+                raise ValueError("normal_min не может быть больше normal_max")
+            if normal_min < allowed_min or normal_max > allowed_max:
+                raise ValueError("normal должен находиться внутри allowed")
+
+            return {
+                "name": name,
+                "type": "range",
+                "unit": unit,
+                "allowed": [allowed_min, allowed_max],
+                "normal": [normal_min, normal_max],
+            }
+
+        if not isinstance(allowed, dict) or not allowed:
+            raise ValueError("Для enum 'allowed' должен быть непустым объектом ключ-значение")
+        if not isinstance(normal, str):
+            raise ValueError("Для enum 'normal' должен быть строковым ключом")
+
+        normalized_allowed: dict[str, str] = {}
+        for key, value in allowed.items():
+            option_key = str(key).strip()
+            option_value = str(value).strip()
+            if not option_key:
+                raise ValueError("Ключ enum не может быть пустым")
+            if not option_value:
+                raise ValueError("Значение enum не может быть пустым")
+            normalized_allowed[option_key] = option_value
+
+        normal_key = normal.strip()
+        if normal_key not in normalized_allowed:
+            raise ValueError("normal должен быть одним из ключей allowed")
+
+        return {
+            "name": name,
+            "type": "enum",
+            "unit": unit,
+            "allowed": normalized_allowed,
+            "normal": normal_key,
+        }
+
+    def _characteristic_usage(self, characteristic_id: int) -> tuple[list[str], list[str]]:
+        diagnoses = self.repo.list_diagnoses_using_characteristic(characteristic_id)
+        systems = self.repo.list_body_systems_using_characteristic(characteristic_id)
+        diagnosis_names = sorted(item.name for item in diagnoses)
+        system_names = sorted(item.name for item in systems)
+        return diagnosis_names, system_names
+
+    def get_characteristic_detail(self, characteristic_id: int) -> dict[str, Any] | None:
+        row = self.repo.get_characteristic(characteristic_id)
+        if not row:
+            return None
+        return self._serialize_characteristic(row)
+
+    def get_characteristic_usage(self, characteristic_id: int) -> dict[str, Any]:
+        row = self.repo.get_characteristic(characteristic_id)
+        if not row:
+            raise ValueError("Характеристика не найдена")
+        used_in_diagnoses, used_in_body_systems = self._characteristic_usage(characteristic_id)
+        return {
+            "diagnosis_count": len(used_in_diagnoses),
+            "body_system_count": len(used_in_body_systems),
+            "used_in_diagnoses": used_in_diagnoses,
+            "used_in_body_systems": used_in_body_systems,
+        }
+
+    def create_characteristic(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_characteristic_payload(payload)
+        if self.repo.get_characteristic_by_name(normalized["name"]):
+            raise ValueError("Характеристика с таким названием уже существует")
+
+        if normalized["type"] == "range":
+            item = self.repo.create_characteristic(
+                name=normalized["name"],
+                type_name="range",
+                unit=normalized["unit"],
+                allowed_min=normalized["allowed"][0],
+                allowed_max=normalized["allowed"][1],
+                normal_min=normalized["normal"][0],
+                normal_max=normalized["normal"][1],
+                normal_enum_key=None,
+            )
+        else:
+            item = self.repo.create_characteristic(
+                name=normalized["name"],
+                type_name="enum",
+                unit=normalized["unit"],
+                allowed_min=None,
+                allowed_max=None,
+                normal_min=None,
+                normal_max=None,
+                normal_enum_key=normalized["normal"],
+            )
+            for key, value in normalized["allowed"].items():
+                self.repo.add_characteristic_enum_option(
+                    characteristic_id=item.id,
+                    option_key=key,
+                    option_value=value,
+                )
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось создать характеристику")
+
+        created = self.repo.get_characteristic(item.id)
+        if not created:
+            raise ValueError("Не удалось загрузить созданную характеристику")
+        return self._serialize_characteristic(created)
+
+    def update_characteristic(
+        self,
+        characteristic_id: int,
+        payload: dict[str, Any],
+        force: bool = False,
+    ) -> dict[str, Any] | None:
+        characteristic = self.repo.get_characteristic(characteristic_id)
+        if not characteristic:
+            return None
+
+        normalized = self._normalize_characteristic_payload(payload)
+        duplicate = self.repo.get_characteristic_by_name(normalized["name"])
+        if duplicate and duplicate.id != characteristic_id:
+            raise ValueError("Характеристика с таким названием уже существует")
+
+        diagnosis_names, _ = self._characteristic_usage(characteristic_id)
+        in_use = bool(diagnosis_names)
+
+        if characteristic.type != normalized["type"] and in_use and not force:
+            raise ValueError(
+                "Нельзя изменить тип характеристики, которая используется в диагнозах. "
+                "Удалите связи или используйте force=true."
+            )
+
+        if normalized["type"] == "range":
+            if characteristic.type == "range":
+                if in_use:
+                    criteria_rows = self.repo.list_diagnosis_characteristics_by_characteristic(characteristic_id)
+                    allowed_min, allowed_max = normalized["allowed"]
+                    for row in criteria_rows:
+                        if row.expected_min is None or row.expected_max is None:
+                            continue
+                        if row.expected_min < allowed_min or row.expected_max > allowed_max:
+                            raise ValueError(
+                                "Новый диапазон allowed конфликтует с существующими критериями диагнозов"
+                            )
+            elif in_use and not force:
+                raise ValueError("Смена enum -> range запрещена для используемой характеристики без force=true")
+
+            characteristic.type = "range"
+            characteristic.name = normalized["name"]
+            characteristic.unit = normalized["unit"]
+            characteristic.allowed_min = normalized["allowed"][0]
+            characteristic.allowed_max = normalized["allowed"][1]
+            characteristic.normal_min = normalized["normal"][0]
+            characteristic.normal_max = normalized["normal"][1]
+            characteristic.normal_enum_key = None
+            self.repo.clear_characteristic_enum_options(characteristic_id)
+        else:
+            new_allowed = normalized["allowed"]
+            if characteristic.type == "enum" and in_use:
+                criteria_rows = self.repo.list_diagnosis_characteristics_by_characteristic(characteristic_id)
+                used_keys = {
+                    str(row.expected_enum_key)
+                    for row in criteria_rows
+                    if row.expected_enum_key is not None
+                }
+                removed_keys = [key for key in used_keys if key not in new_allowed]
+                if removed_keys and not force:
+                    raise ValueError(
+                        "Нельзя удалить enum-ключи, используемые в критериях диагнозов: "
+                        + ", ".join(sorted(removed_keys))
+                    )
+
+            if characteristic.type != "enum" and in_use and not force:
+                raise ValueError("Смена range -> enum запрещена для используемой характеристики без force=true")
+
+            characteristic.type = "enum"
+            characteristic.name = normalized["name"]
+            characteristic.unit = normalized["unit"]
+            characteristic.allowed_min = None
+            characteristic.allowed_max = None
+            characteristic.normal_min = None
+            characteristic.normal_max = None
+            characteristic.normal_enum_key = normalized["normal"]
+            self.repo.clear_characteristic_enum_options(characteristic_id)
+            for key, value in new_allowed.items():
+                self.repo.add_characteristic_enum_option(
+                    characteristic_id=characteristic_id,
+                    option_key=key,
+                    option_value=value,
+                )
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось обновить характеристику")
+
+        updated = self.repo.get_characteristic(characteristic_id)
+        if not updated:
+            return None
+        return self._serialize_characteristic(updated)
+
+    def delete_characteristic(self, characteristic_id: int, force: bool = False) -> bool:
+        characteristic = self.repo.get_characteristic(characteristic_id)
+        if not characteristic:
+            return False
+
+        diagnosis_names, system_names = self._characteristic_usage(characteristic_id)
+        if (diagnosis_names or system_names) and not force:
+            raise ValueError(
+                "Характеристика используется и не может быть удалена. "
+                f"Диагнозы: {', '.join(diagnosis_names) or '-'}; "
+                f"Системы: {', '.join(system_names) or '-'}"
+            )
+
+        self.repo.delete_characteristic(characteristic)
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось удалить характеристику")
+        return True
+
+    def get_treatment_detail(self, treatment_id: int) -> dict[str, Any] | None:
+        row = self.repo.get_treatment(treatment_id)
+        if not row:
+            return None
+        return self._serialize_treatment(row)
+
     def _validate_body_system_characteristics(self, characteristic_ids: list[int]) -> None:
         if not characteristic_ids:
             return
@@ -201,10 +466,29 @@ class KnowledgeService:
                     raise ValueError(
                         f"Для характеристики '{characteristic.name}' требуется expected_min и expected_max"
                     )
+                expected_min_f = float(expected_min)
+                expected_max_f = float(expected_max)
+                if expected_min_f > expected_max_f:
+                    raise ValueError(
+                        f"Для характеристики '{characteristic.name}' expected_min не может быть больше expected_max"
+                    )
+                if characteristic.allowed_min is not None and expected_min_f < float(characteristic.allowed_min):
+                    raise ValueError(
+                        f"expected_min для '{characteristic.name}' выходит за пределы allowed"
+                    )
+                if characteristic.allowed_max is not None and expected_max_f > float(characteristic.allowed_max):
+                    raise ValueError(
+                        f"expected_max для '{characteristic.name}' выходит за пределы allowed"
+                    )
             elif characteristic.type == "enum":
                 if expected_enum_key is None:
                     raise ValueError(
                         f"Для характеристики '{characteristic.name}' требуется expected_enum_key"
+                    )
+                allowed = {row.option_key for row in characteristic.enum_options}
+                if str(expected_enum_key) not in allowed:
+                    raise ValueError(
+                        f"Для характеристики '{characteristic.name}' неизвестный expected_enum_key='{expected_enum_key}'"
                     )
 
     def create_diagnosis(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -307,6 +591,80 @@ class KnowledgeService:
         if not updated:
             return None
         return self._serialize_treatment(updated)
+
+    def create_treatment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("Название лечения обязательно")
+        actions = [str(item).strip() for item in payload.get("actions", []) if str(item).strip()]
+
+        if self.repo.get_treatment_by_name(name):
+            raise ValueError("Лечение с таким названием уже существует")
+
+        treatment = self.repo.create_treatment(name)
+        for position, action in enumerate(actions):
+            self.repo.create_treatment_action(treatment_id=treatment.id, position=position, action=action)
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось создать лечение")
+
+        created = self.repo.get_treatment(treatment.id)
+        if not created:
+            raise ValueError("Не удалось загрузить созданное лечение")
+        return self._serialize_treatment(created)
+
+    def update_treatment(self, treatment_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+        treatment = self.repo.get_treatment(treatment_id)
+        if not treatment:
+            return None
+
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("Название лечения обязательно")
+        actions = [str(item).strip() for item in payload.get("actions", []) if str(item).strip()]
+
+        duplicate = self.repo.get_treatment_by_name(name)
+        if duplicate and duplicate.id != treatment_id:
+            raise ValueError("Лечение с таким названием уже существует")
+
+        treatment.name = name
+        self.repo.clear_treatment_actions(treatment_id)
+        for position, action in enumerate(actions):
+            self.repo.create_treatment_action(treatment_id=treatment_id, position=position, action=action)
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось обновить лечение")
+
+        updated = self.repo.get_treatment(treatment_id)
+        if not updated:
+            return None
+        return self._serialize_treatment(updated)
+
+    def delete_treatment(self, treatment_id: int) -> bool:
+        treatment = self.repo.get_treatment(treatment_id)
+        if not treatment:
+            return False
+
+        linked_diagnoses = self.repo.list_diagnoses_using_treatment(treatment_id)
+        if linked_diagnoses:
+            names = ", ".join(item.name for item in linked_diagnoses)
+            raise ValueError(
+                f"Лечение используется в диагнозах: {names}. Сначала назначьте другое лечение."
+            )
+
+        self.repo.delete_treatment(treatment)
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            raise ValueError("Не удалось удалить лечение")
+        return True
 
     def get_solver_payload(self, diagnosis_id: int) -> dict[str, Any] | None:
         diagnosis = self.repo.get_diagnosis(diagnosis_id)

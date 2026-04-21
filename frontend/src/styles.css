@@ -204,10 +204,10 @@ button:disabled {
   color: #725817;
 }
 
-.status-ambiguous {
-  background: #fff1e3;
-  border: 1px solid #f3bb7a;
-  color: #844c0c;
+.status-ml_selected {
+  background: #e6f3ff;
+  border: 1px solid #90c2f2;
+  color: #184d7a;
 }
 
 .status-not_determined {
@@ -257,6 +257,12 @@ td {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .solver-layout {
@@ -329,6 +335,13 @@ td {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 8px;
+}
+
+.criterion-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
 }
 
 @media (max-width: 760px) {

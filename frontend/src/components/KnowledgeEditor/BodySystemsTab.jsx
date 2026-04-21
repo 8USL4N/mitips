@@ -6,12 +6,16 @@ import {
   getCharacteristics,
   updateBodySystem
 } from "../../api/client";
+import EditorModeSwitch from "./EditorModeSwitch";
+
+const EMPTY_FORM = { name: "", characteristic_ids: [] };
 
 export default function BodySystemsTab() {
+  const [mode, setMode] = useState("create");
   const [systems, setSystems] = useState([]);
   const [characteristics, setCharacteristics] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [form, setForm] = useState({ name: "", characteristic_ids: [] });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -33,22 +37,29 @@ export default function BodySystemsTab() {
     refresh().catch(() => setError("Не удалось загрузить системы организма"));
   }, []);
 
+  function onModeChange(nextMode) {
+    setMode(nextMode);
+    setMessage("");
+    setError("");
+    if (nextMode === "create") {
+      setSelectedId("");
+      setForm(EMPTY_FORM);
+    }
+  }
+
   function loadSystem(id) {
     setSelectedId(id);
     setMessage("");
     setError("");
-
     if (!id) {
-      setForm({ name: "", characteristic_ids: [] });
+      setForm(EMPTY_FORM);
       return;
     }
-
     const selected = systems.find((item) => String(item.id) === String(id));
     if (!selected) {
-      setForm({ name: "", characteristic_ids: [] });
+      setForm(EMPTY_FORM);
       return;
     }
-
     setForm({
       name: selected.name,
       characteristic_ids: selected.characteristic_ids || []
@@ -57,17 +68,12 @@ export default function BodySystemsTab() {
 
   function toggleCharacteristic(id) {
     const exists = form.characteristic_ids.includes(id);
-    if (exists) {
-      setForm({
-        ...form,
-        characteristic_ids: form.characteristic_ids.filter((item) => item !== id)
-      });
-      return;
-    }
-    setForm({
-      ...form,
-      characteristic_ids: [...form.characteristic_ids, id]
-    });
+    setForm((prev) => ({
+      ...prev,
+      characteristic_ids: exists
+        ? prev.characteristic_ids.filter((item) => item !== id)
+        : [...prev.characteristic_ids, id]
+    }));
   }
 
   function buildPayload() {
@@ -79,9 +85,9 @@ export default function BodySystemsTab() {
 
   async function createNew() {
     try {
-      const payload = buildPayload();
-      const res = await createBodySystem(payload);
+      const res = await createBodySystem(buildPayload());
       await refresh();
+      setMode("edit");
       loadSystem(String(res.data.id));
       setMessage("Система организма добавлена");
       setError("");
@@ -96,7 +102,6 @@ export default function BodySystemsTab() {
       setError("Выберите систему организма");
       return;
     }
-
     try {
       await updateBodySystem(Number(selectedId), buildPayload());
       await refresh();
@@ -114,11 +119,11 @@ export default function BodySystemsTab() {
       setError("Сначала выберите систему организма");
       return;
     }
-
     try {
       await deleteBodySystem(Number(selectedId));
       await refresh();
-      loadSystem("");
+      setSelectedId("");
+      setForm(EMPTY_FORM);
       setMessage("Система организма удалена");
       setError("");
     } catch (err) {
@@ -127,23 +132,35 @@ export default function BodySystemsTab() {
     }
   }
 
+  const formLocked = mode === "edit" && !selectedId;
+
   return (
     <div className="editor-grid">
-      <label>
-        Список систем организма
-        <select value={selectedId} onChange={(e) => loadSystem(e.target.value)}>
-          <option value="">-- выберите --</option>
-          {systems.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <EditorModeSwitch mode={mode} onModeChange={onModeChange} entityName="систему" />
+
+      {mode === "edit" && (
+        <label>
+          Список систем организма
+          <select value={selectedId} onChange={(e) => loadSystem(e.target.value)}>
+            <option value="">-- выберите --</option>
+            {systems.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {formLocked && <div className="alert">Выберите систему для редактирования.</div>}
 
       <label>
         Название системы организма
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <input
+          disabled={formLocked}
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
       </label>
 
       <div>
@@ -153,6 +170,7 @@ export default function BodySystemsTab() {
             <label key={item.id} className="checkbox-row">
               <input
                 type="checkbox"
+                disabled={formLocked}
                 checked={form.characteristic_ids.includes(item.id)}
                 onChange={() => toggleCharacteristic(item.id)}
               />
@@ -163,15 +181,21 @@ export default function BodySystemsTab() {
       </div>
 
       <div className="button-row">
-        <button type="button" className="primary" onClick={saveExisting}>
-          Сохранить выбранную
-        </button>
-        <button type="button" onClick={createNew}>
-          Создать систему
-        </button>
-        <button type="button" className="danger" onClick={removeCurrent}>
-          Удалить выбранную
-        </button>
+        {mode === "create" && (
+          <button type="button" onClick={createNew}>
+            Создать систему
+          </button>
+        )}
+        {mode === "edit" && (
+          <>
+            <button type="button" className="primary" onClick={saveExisting} disabled={formLocked}>
+              Сохранить изменения
+            </button>
+            <button type="button" className="danger" onClick={removeCurrent} disabled={formLocked}>
+              Удалить
+            </button>
+          </>
+        )}
       </div>
 
       {message && <div className="alert ok">{message}</div>}

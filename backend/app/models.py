@@ -31,6 +31,21 @@ class CharacteristicRead(CharacteristicPayload):
     name: str
 
 
+class CharacteristicCreateRequest(CharacteristicPayload):
+    name: str
+
+
+class CharacteristicUpdateRequest(CharacteristicPayload):
+    name: str
+
+
+class CharacteristicUsageRead(BaseModel):
+    diagnosis_count: int
+    body_system_count: int
+    used_in_diagnoses: list[str] = Field(default_factory=list)
+    used_in_body_systems: list[str] = Field(default_factory=list)
+
+
 class BodySystemRead(BaseModel):
     id: int
     name: str
@@ -102,6 +117,17 @@ class TreatmentActionsUpdateRequest(BaseModel):
         return cleaned
 
 
+class TreatmentUpsertRequest(BaseModel):
+    name: str
+    actions: list[str] = Field(default_factory=list)
+
+    @field_validator("actions")
+    @classmethod
+    def validate_actions(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item and item.strip()]
+        return cleaned
+
+
 class SolveRequest(BaseModel):
     diagnosis_id: int
     patient_values: dict[str, Any] = Field(default_factory=dict)
@@ -128,6 +154,13 @@ class SolveBySymptomsRequest(BaseModel):
     patient_values: dict[str, Any] = Field(default_factory=dict)
 
 
+class RankedCandidate(BaseModel):
+    diagnosis_id: int
+    diagnosis: str
+    score: float
+    source: Literal["rules", "ml"]
+
+
 class DiagnosisHypothesis(BaseModel):
     diagnosis_id: int
     diagnosis: str
@@ -142,7 +175,10 @@ class DiagnosisHypothesis(BaseModel):
 
 
 class SolveBySymptomsResponse(BaseModel):
-    status: Literal["determined", "likely", "ambiguous", "not_determined"]
+    status: Literal["determined", "likely", "ml_selected", "not_determined"]
     message: str
     primary: DiagnosisHypothesis | None
     alternatives: list[DiagnosisHypothesis] = Field(default_factory=list)
+    selection_method: Literal["rules", "ml", "fallback"]
+    confidence: float | None = None
+    ranked_candidates: list[RankedCandidate] = Field(default_factory=list)

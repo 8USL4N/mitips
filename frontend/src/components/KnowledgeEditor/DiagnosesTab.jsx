@@ -1,49 +1,83 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createDiagnosis,
   deleteDiagnosis,
-  getCharacteristics,
   getDiagnosisById,
   getDiagnoses,
+  getCharacteristics,
   getTreatments,
   updateDiagnosis
 } from "../../api/client";
+import EditorModeSwitch from "./EditorModeSwitch";
 
-function prettyJson(value) {
-  return JSON.stringify(value, null, 2);
+function emptyForm() {
+  return {
+    name: "",
+    icd10: "",
+    treatment_id: "",
+    criteria: []
+  };
 }
 
-function criteriaForEdit(criteria) {
-  return criteria.map((item) => ({
-    characteristic_id: item.characteristic_id,
-    expected_enum_key: item.expected_enum_key,
-    expected_min: item.expected_min,
-    expected_max: item.expected_max
+function criteriaFromDetail(criteria) {
+  return (criteria || []).map((item) => ({
+    characteristic_id: String(item.characteristic_id),
+    expected_enum_key: item.expected_enum_key ?? "",
+    expected_min: item.expected_min ?? "",
+    expected_max: item.expected_max ?? ""
   }));
 }
 
-function normalizeCriteria(raw) {
-  return raw.map((item) => ({
-    characteristic_id: Number(item.characteristic_id),
-    expected_enum_key: item.expected_enum_key ?? null,
-    expected_min: item.expected_min === null || item.expected_min === undefined || item.expected_min === "" ? null : Number(item.expected_min),
-    expected_max: item.expected_max === null || item.expected_max === undefined || item.expected_max === "" ? null : Number(item.expected_max)
-  }));
+function buildPayload(form, characteristicById) {
+  const criteria = form.criteria
+    .filter((item) => item.characteristic_id)
+    .map((item) => {
+      const characteristic = characteristicById[Number(item.characteristic_id)];
+      if (!characteristic) {
+        return null;
+      }
+      if (characteristic.type === "range") {
+        return {
+          characteristic_id: Number(item.characteristic_id),
+          expected_enum_key: null,
+          expected_min: item.expected_min === "" ? null : Number(item.expected_min),
+          expected_max: item.expected_max === "" ? null : Number(item.expected_max)
+        };
+      }
+      return {
+        characteristic_id: Number(item.characteristic_id),
+        expected_enum_key: item.expected_enum_key || null,
+        expected_min: null,
+        expected_max: null
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    name: form.name.trim(),
+    icd10: form.icd10.trim() ? form.icd10.trim() : null,
+    treatment_id: Number(form.treatment_id),
+    criteria
+  };
 }
 
 export default function DiagnosesTab() {
+  const [mode, setMode] = useState("create");
   const [diagnoses, setDiagnoses] = useState([]);
   const [treatments, setTreatments] = useState([]);
   const [characteristics, setCharacteristics] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [form, setForm] = useState({
-    name: "",
-    icd10: "",
-    treatment_id: "",
-    criteriaJson: "[]"
-  });
+  const [form, setForm] = useState(emptyForm());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  const characteristicById = useMemo(() => {
+    const map = {};
+    for (const item of characteristics) {
+      map[item.id] = item;
+    }
+    return map;
+  }, [characteristics]);
 
   async function refresh() {
     const [diagnosesRes, treatmentsRes, characteristicsRes] = await Promise.all([
@@ -60,16 +94,22 @@ export default function DiagnosesTab() {
     refresh().catch(() => setError("Не удалось загрузить данные"));
   }, []);
 
+  function onModeChange(nextMode) {
+    setMode(nextMode);
+    setSelectedId("");
+    setForm(emptyForm());
+    setMessage("");
+    setError("");
+  }
+
   async function loadDiagnosis(id) {
     setSelectedId(id);
     setMessage("");
     setError("");
-
     if (!id) {
-      setForm({ name: "", icd10: "", treatment_id: "", criteriaJson: "[]" });
+      setForm(emptyForm());
       return;
     }
-
     try {
       const res = await getDiagnosisById(id);
       const item = res.data;
@@ -77,21 +117,49 @@ export default function DiagnosesTab() {
         name: item.name,
         icd10: item.icd10 || "",
         treatment_id: String(item.treatment_id),
-        criteriaJson: prettyJson(criteriaForEdit(item.criteria || []))
+        criteria: criteriaFromDetail(item.criteria)
       });
     } catch (err) {
       setError(err.response?.data?.detail || "Не удалось загрузить диагноз");
     }
   }
 
-  function buildPayload() {
-    const criteria = normalizeCriteria(JSON.parse(form.criteriaJson || "[]"));
-    return {
-      name: form.name.trim(),
-      icd10: form.icd10.trim() ? form.icd10.trim() : null,
-      treatment_id: Number(form.treatment_id),
-      criteria
-    };
+  function addCriterion() {
+    setForm((prev) => ({
+      ...prev,
+      criteria: [
+        ...prev.criteria,
+        {
+          characteristic_id: "",
+          expected_enum_key: "",
+          expected_min: "",
+          expected_max: ""
+        }
+      ]
+    }));
+  }
+
+  function updateCriterion(index, patch) {
+    setForm((prev) => {
+      const criteria = [...prev.criteria];
+      criteria[index] = { ...criteria[index], ...patch };
+      return { ...prev, criteria };
+    });
+  }
+
+  async function createNew() {
+    try {
+      const payload = buildPayload(form, characteristicById);
+      const res = await createDiagnosis(payload);
+      await refresh();
+      setMode("edit");
+      await loadDiagnosis(String(res.data.id));
+      setMessage("Диагноз добавлен");
+      setError("");
+    } catch (err) {
+      setError(err.response?.data?.detail || "Ошибка при добавлении");
+      setMessage("");
+    }
   }
 
   async function saveExisting() {
@@ -99,9 +167,8 @@ export default function DiagnosesTab() {
       setError("Выберите диагноз для сохранения");
       return;
     }
-
     try {
-      const payload = buildPayload();
+      const payload = buildPayload(form, characteristicById);
       await updateDiagnosis(Number(selectedId), payload);
       await refresh();
       await loadDiagnosis(selectedId);
@@ -113,30 +180,16 @@ export default function DiagnosesTab() {
     }
   }
 
-  async function createNew() {
-    try {
-      const payload = buildPayload();
-      const res = await createDiagnosis(payload);
-      await refresh();
-      await loadDiagnosis(String(res.data.id));
-      setMessage("Диагноз добавлен");
-      setError("");
-    } catch (err) {
-      setError(err.response?.data?.detail || "Ошибка при добавлении");
-      setMessage("");
-    }
-  }
-
   async function removeCurrent() {
     if (!selectedId) {
       setError("Сначала выберите диагноз");
       return;
     }
-
     try {
       await deleteDiagnosis(Number(selectedId));
       await refresh();
-      await loadDiagnosis("");
+      setSelectedId("");
+      setForm(emptyForm());
       setMessage("Диагноз удалён");
       setError("");
     } catch (err) {
@@ -145,35 +198,52 @@ export default function DiagnosesTab() {
     }
   }
 
+  const formLocked = mode === "edit" && !selectedId;
+
   return (
     <div className="editor-grid">
-      <label>
-        Список диагнозов
-        <select value={selectedId} onChange={(e) => loadDiagnosis(e.target.value)}>
-          <option value="">-- выберите --</option>
-          {diagnoses.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <EditorModeSwitch mode={mode} onModeChange={onModeChange} entityName="диагноз" />
+
+      {mode === "edit" && (
+        <label>
+          Список диагнозов
+          <select value={selectedId} onChange={(e) => loadDiagnosis(e.target.value)}>
+            <option value="">-- выберите --</option>
+            {diagnoses.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {formLocked && <div className="alert">Выберите диагноз для редактирования.</div>}
 
       <label>
         Название диагноза
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <input
+          disabled={formLocked}
+          value={form.name}
+          onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+        />
       </label>
 
       <label>
         Код МКБ-10
-        <input value={form.icd10} onChange={(e) => setForm({ ...form, icd10: e.target.value })} />
+        <input
+          disabled={formLocked}
+          value={form.icd10}
+          onChange={(e) => setForm((prev) => ({ ...prev, icd10: e.target.value }))}
+        />
       </label>
 
       <label>
         Лечение
         <select
+          disabled={formLocked}
           value={form.treatment_id}
-          onChange={(e) => setForm({ ...form, treatment_id: e.target.value })}
+          onChange={(e) => setForm((prev) => ({ ...prev, treatment_id: e.target.value }))}
         >
           <option value="">-- выберите --</option>
           {treatments.map((item) => (
@@ -184,31 +254,111 @@ export default function DiagnosesTab() {
         </select>
       </label>
 
-      <label>
-        Критерии (JSON)
-        <textarea
-          rows={10}
-          value={form.criteriaJson}
-          onChange={(e) => setForm({ ...form, criteriaJson: e.target.value })}
-        />
-      </label>
+      <div>
+        <p className="muted">Критерии диагноза</p>
+        <div className="editor-grid">
+          {form.criteria.map((criterion, index) => {
+            const characteristic = characteristicById[Number(criterion.characteristic_id)];
+            return (
+              <div key={`${criterion.characteristic_id}-${index}`} className="criterion-card">
+                <label>
+                  Характеристика
+                  <select
+                    disabled={formLocked}
+                    value={criterion.characteristic_id}
+                    onChange={(e) =>
+                      updateCriterion(index, {
+                        characteristic_id: e.target.value,
+                        expected_enum_key: "",
+                        expected_min: "",
+                        expected_max: ""
+                      })
+                    }
+                  >
+                    <option value="">-- выберите --</option>
+                    {characteristics.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-      <div className="alert">
-        Характеристики для criteria:
-        <br />
-        {characteristics.map((item) => `${item.id}: ${item.name}`).join(" | ")}
+                {characteristic?.type === "range" && (
+                  <div className="inline-form">
+                    <input
+                      disabled={formLocked}
+                      type="number"
+                      placeholder="expected min"
+                      value={criterion.expected_min}
+                      onChange={(e) => updateCriterion(index, { expected_min: e.target.value })}
+                    />
+                    <input
+                      disabled={formLocked}
+                      type="number"
+                      placeholder="expected max"
+                      value={criterion.expected_max}
+                      onChange={(e) => updateCriterion(index, { expected_max: e.target.value })}
+                    />
+                  </div>
+                )}
+
+                {characteristic?.type === "enum" && (
+                  <label>
+                    expected enum key
+                    <select
+                      disabled={formLocked}
+                      value={criterion.expected_enum_key}
+                      onChange={(e) => updateCriterion(index, { expected_enum_key: e.target.value })}
+                    >
+                      <option value="">-- выберите --</option>
+                      {Object.entries(characteristic.allowed || {}).map(([key, value]) => (
+                        <option key={key} value={key}>
+                          {key} - {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={formLocked}
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      criteria: prev.criteria.filter((_, i) => i !== index)
+                    }))
+                  }
+                >
+                  Удалить критерий
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button type="button" disabled={formLocked} onClick={addCriterion}>
+          Добавить критерий
+        </button>
       </div>
 
       <div className="button-row">
-        <button type="button" className="primary" onClick={saveExisting}>
-          Сохранить выбранный
-        </button>
-        <button type="button" onClick={createNew}>
-          Создать диагноз
-        </button>
-        <button type="button" className="danger" onClick={removeCurrent}>
-          Удалить выбранный
-        </button>
+        {mode === "create" && (
+          <button type="button" onClick={createNew}>
+            Создать диагноз
+          </button>
+        )}
+        {mode === "edit" && (
+          <>
+            <button type="button" className="primary" onClick={saveExisting} disabled={formLocked}>
+              Сохранить изменения
+            </button>
+            <button type="button" className="danger" onClick={removeCurrent} disabled={formLocked}>
+              Удалить
+            </button>
+          </>
+        )}
       </div>
 
       {message && <div className="alert ok">{message}</div>}

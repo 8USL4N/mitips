@@ -45,14 +45,14 @@ function HypothesisCard({ item, title }) {
   );
 }
 
-function missingSummary(items) {
-  const merged = new Set();
-  for (const item of items) {
-    for (const characteristic of item.missing_characteristics || []) {
-      merged.add(characteristic);
-    }
+function selectionMethodLabel(method) {
+  if (method === "ml") {
+    return "ML-модель";
   }
-  return Array.from(merged);
+  if (method === "rules") {
+    return "Правила";
+  }
+  return "Fallback";
 }
 
 export default function DiagnosisResult({ result }) {
@@ -61,50 +61,68 @@ export default function DiagnosisResult({ result }) {
   }
 
   const statusClass = `status-banner status-${result.status}`;
+  const primary = result.primary;
+  const hasAlternatives = Array.isArray(result.alternatives) && result.alternatives.length > 0;
 
-  if (result.status === "determined" || result.status === "likely") {
-    const item = result.primary;
-    if (!item) {
-      return null;
-    }
-
-    return (
-      <div className="result-block">
-        <div className={statusClass}>{result.message}</div>
-        {result.status === "likely" && item.missing_characteristics.length > 0 && (
-          <div className="alert">
-            Для однозначного определения не хватает: {item.missing_characteristics.join(", ")}
-          </div>
-        )}
-        <HypothesisCard item={item} />
-      </div>
-    );
-  }
-
-  const mergedMissing = missingSummary(result.alternatives);
   return (
     <div className="result-block">
       <div className={statusClass}>{result.message}</div>
-      {mergedMissing.length > 0 && (
-        <div className="alert">Введите дополнительные характеристики: {mergedMissing.join(", ")}</div>
+
+      {result.status === "ml_selected" && (
+        <div className="alert">
+          Найдено несколько подходящих диагнозов. Модель выбрала наиболее вероятный.
+        </div>
       )}
-      {result.status === "not_determined" && (
-        <div className="alert">Требуется дополнительное обследование для точного диагноза.</div>
-      )}
-      <div className="accordion-list">
-        {result.alternatives.map((item, index) => (
-          <details key={item.diagnosis_id} open={index === 0}>
-            <summary>
-              {item.diagnosis}
-              {item.icd10 ? ` (${item.icd10})` : ""}
-            </summary>
-            <HypothesisCard
-              item={item}
-              title={result.status === "ambiguous" ? "Кандидат на диагноз" : "Возможная гипотеза"}
-            />
-          </details>
-        ))}
+
+      <div className="alert">
+        Метод выбора: <strong>{selectionMethodLabel(result.selection_method)}</strong>
+        {typeof result.confidence === "number" && (
+          <>
+            {" "}
+            | Уверенность: <strong>{Math.round(result.confidence * 100)}%</strong>
+          </>
+        )}
       </div>
+
+      {primary && <HypothesisCard item={primary} />}
+
+      {Array.isArray(result.ranked_candidates) && result.ranked_candidates.length > 0 && (
+        <div>
+          <h4>Ранжированные кандидаты</h4>
+          <table>
+            <thead>
+              <tr>
+                <th>Диагноз</th>
+                <th>Оценка</th>
+                <th>Источник</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.ranked_candidates.map((item) => (
+                <tr key={item.diagnosis_id}>
+                  <td>{item.diagnosis}</td>
+                  <td>{Math.round(item.score * 100)}%</td>
+                  <td>{item.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hasAlternatives && (
+        <div className="accordion-list">
+          {result.alternatives.map((item, index) => (
+            <details key={item.diagnosis_id} open={index === 0}>
+              <summary>
+                {item.diagnosis}
+                {item.icd10 ? ` (${item.icd10})` : ""}
+              </summary>
+              <HypothesisCard item={item} title="Альтернативный кандидат" />
+            </details>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

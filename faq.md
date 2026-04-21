@@ -60,13 +60,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1
 docker compose exec -T backend python scripts/export_kb.py
 ```
 
-## 4) Остановка проекта
+## 4) Что изменилось в решателе
+
+- Основной endpoint: `POST /api/solver/determine`.
+- При нескольких кандидатов используется ML-ranker (`status=ml_selected`).
+- Endpoint `POST /api/solver/solve` сохранён как deprecated для совместимости, но UI его не использует.
+
+## 5) Остановка проекта
 
 ```bash
 docker compose down
 ```
 
-## 5) Полный сброс (если нужно начать “с чистого листа”)
+## 6) Полный сброс
 
 ```bash
 docker compose down -v

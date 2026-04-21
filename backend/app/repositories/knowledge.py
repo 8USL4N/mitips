@@ -44,6 +44,23 @@ class KnowledgeRepository:
     def get_diagnosis_by_name(self, name: str) -> Diagnosis | None:
         return self.session.scalar(select(Diagnosis).where(Diagnosis.name == name))
 
+    def list_diagnoses_using_characteristic(self, characteristic_id: int) -> list[Diagnosis]:
+        statement = (
+            select(Diagnosis)
+            .join(DiagnosisCharacteristic, DiagnosisCharacteristic.diagnosis_id == Diagnosis.id)
+            .where(DiagnosisCharacteristic.characteristic_id == characteristic_id)
+            .order_by(Diagnosis.name)
+        )
+        return list(self.session.scalars(statement).unique().all())
+
+    def list_diagnoses_using_treatment(self, treatment_id: int) -> list[Diagnosis]:
+        statement = select(Diagnosis).where(Diagnosis.treatment_id == treatment_id).order_by(Diagnosis.name)
+        return list(self.session.scalars(statement).unique().all())
+
+    def list_diagnosis_characteristics_by_characteristic(self, characteristic_id: int) -> list[DiagnosisCharacteristic]:
+        statement = select(DiagnosisCharacteristic).where(DiagnosisCharacteristic.characteristic_id == characteristic_id)
+        return list(self.session.scalars(statement).all())
+
     def list_characteristics(self) -> list[Characteristic]:
         statement = (
             select(Characteristic)
@@ -51,6 +68,21 @@ class KnowledgeRepository:
             .order_by(Characteristic.name)
         )
         return list(self.session.scalars(statement).unique().all())
+
+    def get_characteristic(self, characteristic_id: int) -> Characteristic | None:
+        statement = (
+            select(Characteristic)
+            .where(Characteristic.id == characteristic_id)
+            .options(
+                joinedload(Characteristic.enum_options),
+                joinedload(Characteristic.diagnosis_links).joinedload(DiagnosisCharacteristic.diagnosis),
+                joinedload(Characteristic.body_system_links).joinedload(BodySystemCharacteristic.body_system),
+            )
+        )
+        return self.session.scalar(statement)
+
+    def get_characteristic_by_name(self, name: str) -> Characteristic | None:
+        return self.session.scalar(select(Characteristic).where(Characteristic.name == name))
 
     def list_body_systems(self) -> list[BodySystem]:
         statement = (
@@ -81,6 +113,15 @@ class KnowledgeRepository:
         )
         rows = self.session.scalars(statement).unique().all()
         return {row.id: row for row in rows}
+
+    def list_body_systems_using_characteristic(self, characteristic_id: int) -> list[BodySystem]:
+        statement = (
+            select(BodySystem)
+            .join(BodySystemCharacteristic, BodySystemCharacteristic.body_system_id == BodySystem.id)
+            .where(BodySystemCharacteristic.characteristic_id == characteristic_id)
+            .order_by(BodySystem.name)
+        )
+        return list(self.session.scalars(statement).unique().all())
 
     def list_treatments(self) -> list[Treatment]:
         statement = (
@@ -149,6 +190,11 @@ class KnowledgeRepository:
         self.session.flush()
         return option
 
+    def clear_characteristic_enum_options(self, characteristic_id: int) -> None:
+        self.session.execute(
+            delete(CharacteristicEnumOption).where(CharacteristicEnumOption.characteristic_id == characteristic_id)
+        )
+
     def add_body_system_characteristic(
         self,
         *,
@@ -173,6 +219,9 @@ class KnowledgeRepository:
         self.session.add(treatment)
         self.session.flush()
         return treatment
+
+    def delete_treatment(self, treatment: Treatment) -> None:
+        self.session.delete(treatment)
 
     def create_treatment_action(self, *, treatment_id: int, position: int, action: str) -> TreatmentAction:
         row = TreatmentAction(treatment_id=treatment_id, position=position, action=action)
@@ -217,6 +266,9 @@ class KnowledgeRepository:
 
     def delete_body_system(self, body_system: BodySystem) -> None:
         self.session.delete(body_system)
+
+    def delete_characteristic(self, characteristic: Characteristic) -> None:
+        self.session.delete(characteristic)
 
     def commit(self) -> None:
         self.session.commit()
