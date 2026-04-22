@@ -35,9 +35,6 @@ export const deleteTreatment = (id) => api.delete(`/treatments/${id}`);
 export const updateTreatmentActions = (id, actions) =>
   api.put(`/treatments/${id}/actions`, { actions });
 
-export const solveDiagnosis = (diagnosisId, patientValues) =>
-  api.post("/solver/solve", { diagnosis_id: diagnosisId, patient_values: patientValues });
-
 export const determineDiagnosis = (patientValues) =>
   api.post("/solver/determine", { patient_values: patientValues });
 

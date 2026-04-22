@@ -10,6 +10,13 @@ import EditorModeSwitch from "./EditorModeSwitch";
 
 const EMPTY_FORM = { name: "", characteristic_ids: [] };
 
+function toForm(system) {
+  return {
+    name: system?.name || "",
+    characteristic_ids: system?.characteristic_ids || []
+  };
+}
+
 export default function BodySystemsTab() {
   const [mode, setMode] = useState("create");
   const [systems, setSystems] = useState([]);
@@ -60,10 +67,7 @@ export default function BodySystemsTab() {
       setForm(EMPTY_FORM);
       return;
     }
-    setForm({
-      name: selected.name,
-      characteristic_ids: selected.characteristic_ids || []
-    });
+    setForm(toForm(selected));
   }
 
   function toggleCharacteristic(id) {
@@ -86,9 +90,11 @@ export default function BodySystemsTab() {
   async function createNew() {
     try {
       const res = await createBodySystem(buildPayload());
+      const created = res.data;
       await refresh();
       setMode("edit");
-      loadSystem(String(res.data.id));
+      setSelectedId(String(created.id));
+      setForm(toForm(created));
       setMessage("Система организма добавлена");
       setError("");
     } catch (err) {
@@ -100,13 +106,16 @@ export default function BodySystemsTab() {
   async function saveExisting() {
     if (!selectedId) {
       setError("Выберите систему организма");
+      setMessage("");
       return;
     }
     try {
-      await updateBodySystem(Number(selectedId), buildPayload());
+      const res = await updateBodySystem(Number(selectedId), buildPayload());
+      const updated = res.data;
       await refresh();
-      loadSystem(selectedId);
-      setMessage("Изменения сохранены");
+      setSelectedId(String(updated.id));
+      setForm(toForm(updated));
+      setMessage("Система организма обновлена");
       setError("");
     } catch (err) {
       setMessage("");

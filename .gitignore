@@ -8,3 +8,11 @@ dist/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/data/*.bak
+
+# Local SQLite runtime files
+*.sqlite3
+*.sqlite3-journal
+backend/*.sqlite3
+backend/*.sqlite3-journal
+backend/.*.sqlite3
+backend/.*.sqlite3-journal
