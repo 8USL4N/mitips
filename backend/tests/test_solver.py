@@ -275,7 +275,7 @@ def test_repair_mojibake_text_variants(client) -> None:
 def test_repair_mojibake_in_db_fixes_persisted_text(client) -> None:
     with db.SessionLocal() as session:
         service = KnowledgeService(session)
-        treatment = session.query(Treatment).order_by(Treatment.id).first()
+        treatment = session.query(Treatment).filter(Treatment.actions.any()).order_by(Treatment.id).first()
         assert treatment is not None
         assert treatment.actions
 
