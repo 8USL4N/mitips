@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import db
@@ -30,6 +30,7 @@ def startup() -> None:
     with db.SessionLocal() as session:
         service = KnowledgeService(session)
         service.seed_from_json_if_empty(get_seed_path())
+        service.repair_mojibake_in_db()
 
 
 @app.get("/")

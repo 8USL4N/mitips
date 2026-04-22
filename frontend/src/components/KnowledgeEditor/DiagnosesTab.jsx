@@ -28,6 +28,72 @@ function criteriaFromDetail(criteria) {
   }));
 }
 
+function parseRequiredNumber(value, fieldName) {
+  if (value === "" || value === null || value === undefined) {
+    throw new Error(`${fieldName} обязательно`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${fieldName} должно быть числом`);
+  }
+
+  return parsed;
+}
+
+function validateDiagnosisForm(form, characteristicById) {
+  if (!form.name.trim()) {
+    return "Название диагноза обязательно";
+  }
+  if (!form.treatment_id) {
+    return "Лечение обязательно";
+  }
+
+  for (const item of form.criteria) {
+    if (!item.characteristic_id) {
+      continue;
+    }
+
+    const characteristic = characteristicById[Number(item.characteristic_id)];
+    if (!characteristic) {
+      continue;
+    }
+
+    if (characteristic.type === "range") {
+      let expectedMin;
+      let expectedMax;
+      try {
+        expectedMin = parseRequiredNumber(item.expected_min, `${characteristic.name}: expected_min`);
+        expectedMax = parseRequiredNumber(item.expected_max, `${characteristic.name}: expected_max`);
+      } catch (err) {
+        return err.message;
+      }
+
+      if (expectedMin > expectedMax) {
+        return `${characteristic.name}: expected_min не может быть больше expected_max`;
+      }
+
+      if (!Array.isArray(characteristic.allowed) || characteristic.allowed.length !== 2) {
+        return `${characteristic.name}: некорректно настроен допустимый диапазон`;
+      }
+
+      const allowedMin = Number(characteristic.allowed[0]);
+      const allowedMax = Number(characteristic.allowed[1]);
+      if (!Number.isFinite(allowedMin) || !Number.isFinite(allowedMax)) {
+        return `${characteristic.name}: некорректно настроен допустимый диапазон`;
+      }
+
+      if (expectedMin < allowedMin || expectedMax > allowedMax) {
+        return `${characteristic.name}: ожидаемый диапазон должен быть внутри ${allowedMin}-${allowedMax}`;
+      }
+    } else if (!item.expected_enum_key) {
+      return `${characteristic.name}: expected_enum_key обязателен`;
+    }
+  }
+
+  return "";
+}
+
 function buildPayload(form, characteristicById) {
   const criteria = form.criteria
     .filter((item) => item.characteristic_id)
@@ -40,8 +106,8 @@ function buildPayload(form, characteristicById) {
         return {
           characteristic_id: Number(item.characteristic_id),
           expected_enum_key: null,
-          expected_min: item.expected_min === "" ? null : Number(item.expected_min),
-          expected_max: item.expected_max === "" ? null : Number(item.expected_max)
+          expected_min: parseRequiredNumber(item.expected_min, "expected_min"),
+          expected_max: parseRequiredNumber(item.expected_max, "expected_max")
         };
       }
       return {
@@ -148,6 +214,13 @@ export default function DiagnosesTab() {
   }
 
   async function createNew() {
+    const validationError = validateDiagnosisForm(form, characteristicById);
+    if (validationError) {
+      setError(validationError);
+      setMessage("");
+      return;
+    }
+
     try {
       const payload = buildPayload(form, characteristicById);
       const res = await createDiagnosis(payload);
@@ -165,6 +238,13 @@ export default function DiagnosesTab() {
   async function saveExisting() {
     if (!selectedId) {
       setError("Выберите диагноз для сохранения");
+      return;
+    }
+
+    const validationError = validateDiagnosisForm(form, characteristicById);
+    if (validationError) {
+      setError(validationError);
+      setMessage("");
       return;
     }
     try {
@@ -289,6 +369,8 @@ export default function DiagnosesTab() {
                     <input
                       disabled={formLocked}
                       type="number"
+                      min={characteristic.allowed?.[0]}
+                      max={characteristic.allowed?.[1]}
                       placeholder="expected min"
                       value={criterion.expected_min}
                       onChange={(e) => updateCriterion(index, { expected_min: e.target.value })}
@@ -296,6 +378,8 @@ export default function DiagnosesTab() {
                     <input
                       disabled={formLocked}
                       type="number"
+                      min={characteristic.allowed?.[0]}
+                      max={characteristic.allowed?.[1]}
                       placeholder="expected max"
                       value={criterion.expected_max}
                       onChange={(e) => updateCriterion(index, { expected_max: e.target.value })}

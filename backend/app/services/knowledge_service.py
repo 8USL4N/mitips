@@ -1,4 +1,6 @@
-﻿import json
+import json
+import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +17,54 @@ class KnowledgeService:
         self.session = session
 
     @staticmethod
-    def _serialize_characteristic(item) -> dict[str, Any]:
+    def _count_non_russian_cyrillic(value: str) -> int:
+        count = 0
+        for char in value:
+            code = ord(char)
+            if 0x0400 <= code <= 0x04FF and not (
+                0x0410 <= code <= 0x044F or code in {0x0401, 0x0451}
+            ):
+                count += 1
+        return count
+
+    @classmethod
+    def _text_quality(cls, value: str) -> int:
+        cyrillic = sum(1 for char in value if "\u0400" <= char <= "\u04FF")
+        bad_latin_markers = sum(value.count(marker) for marker in ("Ã", "Â", "Ð", "Ñ", "�"))
+        suspicious_pairs = len(re.findall(r"(?:Р.|С.)", value))
+        non_russian_cyr = cls._count_non_russian_cyrillic(value)
+        return (cyrillic * 2) - (bad_latin_markers * 10) - (suspicious_pairs * 2) - (non_russian_cyr * 5)
+
+    @classmethod
+    def _repair_mojibake_text(cls, value: str) -> str:
+        if not value:
+            return value
+
+        candidates: set[str] = {value}
+        frontier = [value]
+        for _ in range(3):
+            next_frontier: list[str] = []
+            for text in frontier:
+                for encoding in ("cp1251", "latin1", "cp1252"):
+                    try:
+                        candidate = text.encode(encoding).decode("utf-8")
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        continue
+                    if candidate not in candidates:
+                        candidates.add(candidate)
+                        next_frontier.append(candidate)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+
+        original_score = cls._text_quality(value)
+        best = max(candidates, key=cls._text_quality)
+        if best != value and cls._text_quality(best) >= original_score + 3:
+            return best
+        return value
+
+    @classmethod
+    def _serialize_characteristic(cls, item) -> dict[str, Any]:
         if item.type == "range":
             allowed: list[float] | dict[str, str] = [
                 float(item.allowed_min or 0.0),
@@ -27,57 +76,57 @@ class KnowledgeService:
             ]
         else:
             options = sorted(item.enum_options, key=lambda row: row.option_key)
-            allowed = {row.option_key: row.option_value for row in options}
+            allowed = {row.option_key: cls._repair_mojibake_text(row.option_value) for row in options}
             normal = item.normal_enum_key or ""
 
         return {
             "id": item.id,
-            "name": item.name,
+            "name": cls._repair_mojibake_text(item.name),
             "type": item.type,
-            "unit": item.unit,
+            "unit": cls._repair_mojibake_text(item.unit),
             "allowed": allowed,
             "normal": normal,
         }
 
-    @staticmethod
-    def _serialize_treatment(item) -> dict[str, Any]:
-        actions = [row.action for row in sorted(item.actions, key=lambda row: row.position)]
+    @classmethod
+    def _serialize_treatment(cls, item) -> dict[str, Any]:
+        actions = [cls._repair_mojibake_text(row.action) for row in sorted(item.actions, key=lambda row: row.position)]
         return {
             "id": item.id,
-            "name": item.name,
+            "name": cls._repair_mojibake_text(item.name),
             "actions": actions,
         }
 
-    @staticmethod
-    def _serialize_criterion(row) -> dict[str, Any]:
+    @classmethod
+    def _serialize_criterion(cls, row) -> dict[str, Any]:
         return {
             "id": row.id,
             "characteristic_id": row.characteristic_id,
-            "characteristic_name": row.characteristic.name,
+            "characteristic_name": cls._repair_mojibake_text(row.characteristic.name),
             "characteristic_type": row.characteristic.type,
-            "characteristic_unit": row.characteristic.unit,
+            "characteristic_unit": cls._repair_mojibake_text(row.characteristic.unit),
             "expected_enum_key": row.expected_enum_key,
             "expected_min": row.expected_min,
             "expected_max": row.expected_max,
         }
 
-    @staticmethod
-    def _serialize_diagnosis_summary(item) -> dict[str, Any]:
+    @classmethod
+    def _serialize_diagnosis_summary(cls, item) -> dict[str, Any]:
         return {
             "id": item.id,
-            "name": item.name,
+            "name": cls._repair_mojibake_text(item.name),
             "icd10": item.icd10,
             "treatment_id": item.treatment_id,
-            "treatment_name": item.treatment.name,
+            "treatment_name": cls._repair_mojibake_text(item.treatment.name),
         }
 
-    @staticmethod
-    def _serialize_body_system(item) -> dict[str, Any]:
+    @classmethod
+    def _serialize_body_system(cls, item) -> dict[str, Any]:
         characteristic_ids = [link.characteristic_id for link in item.characteristics]
         characteristic_ids.sort()
         return {
             "id": item.id,
-            "name": item.name,
+            "name": cls._repair_mojibake_text(item.name),
             "characteristic_ids": characteristic_ids,
         }
 
@@ -111,9 +160,16 @@ class KnowledgeService:
     @staticmethod
     def _parse_float(value: Any, field_name: str) -> float:
         try:
-            return float(value)
+            parsed = float(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"Поле '{field_name}' должно быть числом") from exc
+            raise ValueError(
+                f"\u041f\u043e\u043b\u0435 '{field_name}' \u0434\u043e\u043b\u0436\u043d\u043e \u0431\u044b\u0442\u044c \u0447\u0438\u0441\u043b\u043e\u043c"
+            ) from exc
+        if not math.isfinite(parsed):
+            raise ValueError(
+                f"\u041f\u043e\u043b\u0435 '{field_name}' \u0434\u043e\u043b\u0436\u043d\u043e \u0431\u044b\u0442\u044c \u043a\u043e\u043d\u0435\u0447\u043d\u044b\u043c \u0447\u0438\u0441\u043b\u043e\u043c"
+            )
+        return parsed
 
     @classmethod
     def _normalize_characteristic_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -466,8 +522,8 @@ class KnowledgeService:
                     raise ValueError(
                         f"Для характеристики '{characteristic.name}' требуется expected_min и expected_max"
                     )
-                expected_min_f = float(expected_min)
-                expected_max_f = float(expected_max)
+                expected_min_f = self._parse_float(expected_min, "expected_min")
+                expected_max_f = self._parse_float(expected_max, "expected_max")
                 if expected_min_f > expected_max_f:
                     raise ValueError(
                         f"Для характеристики '{characteristic.name}' expected_min не может быть больше expected_max"
@@ -666,6 +722,61 @@ class KnowledgeService:
             raise ValueError("Не удалось удалить лечение")
         return True
 
+
+    def repair_mojibake_in_db(self) -> int:
+        changed = 0
+
+        for body_system in self.repo.list_body_systems():
+            fixed_name = self._repair_mojibake_text(body_system.name)
+            if fixed_name != body_system.name:
+                body_system.name = fixed_name
+                changed += 1
+
+        for characteristic in self.repo.list_characteristics():
+            fixed_name = self._repair_mojibake_text(characteristic.name)
+            if fixed_name != characteristic.name:
+                characteristic.name = fixed_name
+                changed += 1
+
+            fixed_unit = self._repair_mojibake_text(characteristic.unit or "")
+            if fixed_unit != (characteristic.unit or ""):
+                characteristic.unit = fixed_unit
+                changed += 1
+
+            for option in characteristic.enum_options:
+                fixed_option_value = self._repair_mojibake_text(option.option_value)
+                if fixed_option_value != option.option_value:
+                    option.option_value = fixed_option_value
+                    changed += 1
+
+        for treatment in self.repo.list_treatments():
+            fixed_name = self._repair_mojibake_text(treatment.name)
+            if fixed_name != treatment.name:
+                treatment.name = fixed_name
+                changed += 1
+
+            for action in treatment.actions:
+                fixed_action = self._repair_mojibake_text(action.action)
+                if fixed_action != action.action:
+                    action.action = fixed_action
+                    changed += 1
+
+        for diagnosis in self.repo.list_diagnoses():
+            fixed_name = self._repair_mojibake_text(diagnosis.name)
+            if fixed_name != diagnosis.name:
+                diagnosis.name = fixed_name
+                changed += 1
+
+        if not changed:
+            return 0
+
+        try:
+            self.repo.commit()
+        except Exception:
+            self.repo.rollback()
+            return 0
+        return changed
+
     def get_solver_payload(self, diagnosis_id: int) -> dict[str, Any] | None:
         diagnosis = self.repo.get_diagnosis(diagnosis_id)
         if not diagnosis:
@@ -673,10 +784,13 @@ class KnowledgeService:
 
         return {
             "id": diagnosis.id,
-            "name": diagnosis.name,
+            "name": self._repair_mojibake_text(diagnosis.name),
             "icd10": diagnosis.icd10,
-            "treatment_name": diagnosis.treatment.name,
-            "actions": [row.action for row in sorted(diagnosis.treatment.actions, key=lambda row: row.position)],
+            "treatment_name": self._repair_mojibake_text(diagnosis.treatment.name),
+            "actions": [
+                self._repair_mojibake_text(row.action)
+                for row in sorted(diagnosis.treatment.actions, key=lambda row: row.position)
+            ],
             "criteria": [self._serialize_criterion(item) for item in diagnosis.criteria],
         }
 

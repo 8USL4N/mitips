@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ _NEURAL_RANKER = NeuralDiagnosisRanker()
 
 def _format_range(min_value: float | None, max_value: float | None, unit: str = "") -> str:
     if min_value is None or max_value is None:
-        return "не задано"
+        return "не указано"
     unit_part = f" {unit}" if unit else ""
     return f"{min_value}-{max_value}{unit_part}"
 
@@ -55,19 +56,16 @@ def _clean_patient_values(
     for key, value in patient_values.items():
         if value is None:
             continue
-
         key_str = str(key).strip()
         if not key_str:
             continue
         try:
             characteristic_id = int(key_str)
         except ValueError as exc:
-            raise ValueError(f"Некорректный ID характеристики: '{key}'") from exc
-
+            raise ValueError(f"Некорректный id характеристики: '{key}'") from exc
         characteristic = characteristic_map.get(characteristic_id)
         if not characteristic:
             raise ValueError(f"Неизвестная характеристика id={characteristic_id}")
-
         if isinstance(value, str):
             trimmed = value.strip()
             if not trimmed:
@@ -75,25 +73,55 @@ def _clean_patient_values(
             raw_value: Any = trimmed
         else:
             raw_value = value
-
         if characteristic["type"] == "range":
+            allowed = characteristic.get("allowed")
+            if not isinstance(allowed, (list, tuple)) or len(allowed) != 2:
+                raise ValueError(
+                    f"Некорректная конфигурация характеристики '{characteristic['name']}': "
+                    "allowed должен быть [min, max]"
+                )
             try:
-                cleaned[key_str] = float(raw_value)
+                allowed_min = float(allowed[0])
+                allowed_max = float(allowed[1])
             except (TypeError, ValueError) as exc:
                 raise ValueError(
-                    f"Значение характеристики '{characteristic['name']}' должно быть числом"
+                    f"Некорректная конфигурация характеристики '{characteristic['name']}': "
+                    "allowed должен содержать числа"
                 ) from exc
+            if not math.isfinite(allowed_min) or not math.isfinite(allowed_max):
+                raise ValueError(
+                    f"Некорректная конфигурация характеристики '{characteristic['name']}': "
+                    "allowed должен содержать конечные числа"
+                )
+            if allowed_min > allowed_max:
+                raise ValueError(
+                    f"Некорректная конфигурация характеристики '{characteristic['name']}': "
+                    "allowed_min не может быть больше allowed_max"
+                )
+            try:
+                value_float = float(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Значение характеристики '{characteristic['name']}' должно быть числом") from exc
+            if not math.isfinite(value_float):
+                raise ValueError(f"Значение характеристики '{characteristic['name']}' должно быть конечным числом")
+            if value_float < allowed_min or value_float > allowed_max:
+                unit = str(characteristic.get("unit") or "")
+                unit_part = f" {unit}" if unit else ""
+                raise ValueError(
+                    f"Значение характеристики '{characteristic['name']}' должно быть в диапазоне "
+                    f"{allowed_min}-{allowed_max}{unit_part}"
+                )
+            cleaned[key_str] = value_float
         else:
             enum_key = str(raw_value)
             allowed = characteristic["allowed"] if isinstance(characteristic["allowed"], dict) else {}
             if enum_key not in allowed:
                 raise ValueError(
-                    f"Значение '{enum_key}' не входит в допустимые варианты характеристики '{characteristic['name']}'"
+                    f"Значение '{enum_key}' не входит в допустимые варианты характеристики "
+                    f"'{characteristic['name']}'"
                 )
             cleaned[key_str] = enum_key
-
     return cleaned
-
 
 def _matches_criterion(criterion: dict[str, Any], actual: Any) -> bool:
     if criterion["characteristic_type"] == "range":
@@ -196,6 +224,26 @@ def filter_candidates_by_rules(
         "all": all_rows,
     }
 
+def _select_candidate_group(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    viable = [
+        row
+        for row in candidates
+        if row["contradiction_count"] == 0
+        and row["matched_count"] > 0
+        and row["criteria_count"] > 0
+    ]
+    full_matches = [row for row in viable if row["matched_count"] == row["criteria_count"]]
+    if len(full_matches) == 1:
+        return {"method": "rules", "status": "determined", "rows": full_matches}
+    if len(full_matches) > 1:
+        return {"method": "neural", "status": "neural_selected", "rows": full_matches}
+    if not viable:
+        return {"method": "fallback", "status": "not_determined", "rows": []}
+    max_matched = max(row["matched_count"] for row in viable)
+    top_rows = [row for row in viable if row["matched_count"] == max_matched]
+    if len(top_rows) == 1:
+        return {"method": "rules", "status": "likely", "rows": top_rows}
+    return {"method": "neural", "status": "neural_selected", "rows": top_rows}
 
 def _build_hypothesis(
     *,
@@ -283,16 +331,14 @@ def solve_validate_selected(
     diagnosis = service.get_solver_payload(diagnosis_id)
     if not diagnosis:
         raise ValueError(f"Диагноз id={diagnosis_id} не найден в базе знаний")
-
+    characteristic_map = {item["id"]: item for item in service.list_characteristics()}
+    cleaned_values = _clean_patient_values(patient_values, characteristic_map)
     explanation: list[dict[str, Any]] = []
     matched_count = 0
-    characteristic_map = {item["id"]: item for item in service.list_characteristics()}
-
     for criterion in diagnosis["criteria"]:
         characteristic_id = criterion["characteristic_id"]
         key = str(characteristic_id)
-        actual = patient_values.get(key)
-
+        actual = cleaned_values.get(key)
         if criterion["characteristic_type"] == "range":
             try:
                 actual_float = float(actual)
@@ -303,7 +349,6 @@ def solve_validate_selected(
             except (TypeError, ValueError):
                 match = False
                 actual_view = None
-
             explanation.append(
                 {
                     "characteristic": criterion["characteristic_name"],
@@ -330,10 +375,8 @@ def solve_validate_selected(
                     "match": match,
                 }
             )
-
         if explanation[-1]["match"]:
             matched_count += 1
-
     return {
         "diagnosis": diagnosis["name"],
         "icd10": diagnosis.get("icd10"),
@@ -344,7 +387,6 @@ def solve_validate_selected(
         "total_count": len(explanation),
     }
 
-
 def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[str, Any]:
     service = KnowledgeService(session)
     diagnoses, characteristic_map = _load_solver_context(service)
@@ -353,18 +395,16 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
         raise ValueError("Нужно ввести хотя бы одно значение характеристики")
     if not diagnoses:
         raise ValueError("Не удалось выполнить диагностику: нет доступных диагнозов")
-
     filter_result = filter_candidates_by_rules(
         diagnoses=diagnoses,
         patient_values=cleaned_values,
         characteristic_map=characteristic_map,
     )
-
     diagnosis_by_id = {int(item["id"]): item for item in diagnoses}
-    candidates = filter_result["candidates"]
-
-    if len(candidates) == 1:
-        row = candidates[0]
+    selection = _select_candidate_group(filter_result["all"])
+    selected_rows = selection["rows"]
+    if selection["method"] == "rules":
+        row = selected_rows[0]
         diagnosis = diagnosis_by_id[row["diagnosis_id"]]
         hypothesis = _build_hypothesis(
             diagnosis=diagnosis,
@@ -372,11 +412,16 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             characteristic_map=characteristic_map,
             answered_count=row["answered_count"],
         )
-        status = "determined" if row["coverage"] == 1.0 else "likely"
+        status = selection["status"]
+        confidence = 1.0
+        if status == "likely":
+            confidence = (
+                float(row["matched_count"]) / float(row["criteria_count"]) if row["criteria_count"] else 0.0
+            )
         message = (
-            "Диагноз определен правилами."
+            "\u0414\u0438\u0430\u0433\u043d\u043e\u0437 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u0435\u0442 \u0441\u043e \u0432\u0441\u0435\u043c\u0438 \u043a\u0440\u0438\u0442\u0435\u0440\u0438\u044f\u043c\u0438."
             if status == "determined"
-            else "Выбран единственный кандидат по правилам, но данных может быть недостаточно."
+            else "\u0412\u044b\u0431\u0440\u0430\u043d \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043f\u043e \u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u0443 \u0441\u043e\u0432\u043f\u0430\u0432\u0448\u0438\u0445 \u043f\u0440\u0438\u0437\u043d\u0430\u043a\u043e\u0432."
         )
         return {
             "status": status,
@@ -384,7 +429,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             "primary": hypothesis,
             "alternatives": [],
             "selection_method": "rules",
-            "confidence": float(row["specificity"]),
+            "confidence": float(confidence),
             "ranked_candidates": [
                 {
                     "diagnosis_id": int(diagnosis["id"]),
@@ -394,20 +439,19 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 }
             ],
         }
-
-    if len(candidates) > 1:
+    if selection["method"] == "neural":
         snapshot = {
             "characteristics": list(characteristic_map.values()),
             "diagnoses": diagnoses,
         }
-        candidate_ids = [int(item["diagnosis_id"]) for item in candidates]
+        candidate_ids = [int(item["diagnosis_id"]) for item in selected_rows]
         ranked = _NEURAL_RANKER.rank(
             patient_values=cleaned_values,
             candidate_ids=candidate_ids,
             knowledge_snapshot=snapshot,
         )
         if not ranked:
-            fallback_rows = sorted(candidates, key=lambda item: item["rule_score"], reverse=True)[:3]
+            fallback_rows = sorted(selected_rows, key=lambda item: item["rule_score"], reverse=True)[:3]
             fallback_alternatives = [
                 _build_hypothesis(
                     diagnosis=diagnosis_by_id[int(item["diagnosis_id"])],
@@ -428,15 +472,14 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             ]
             return {
                 "status": "not_determined",
-                "message": "Не удалось выполнить нейросетевой выбор. Показаны наиболее близкие гипотезы.",
+                "message": "\u041e\u0434\u043d\u043e\u0437\u043d\u0430\u0447\u043d\u044b\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0435 \u0433\u0438\u043f\u043e\u0442\u0435\u0437\u044b.",
                 "primary": None,
                 "alternatives": fallback_alternatives,
                 "selection_method": "fallback",
                 "confidence": None,
                 "ranked_candidates": fallback_ranked,
             }
-
-        candidate_stats = {int(item["diagnosis_id"]): item for item in candidates}
+        candidate_stats = {int(item["diagnosis_id"]): item for item in selected_rows}
         primary_id = int(ranked[0]["diagnosis_id"])
         primary_hypothesis = _build_hypothesis(
             diagnosis=diagnosis_by_id[primary_id],
@@ -444,7 +487,6 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             characteristic_map=characteristic_map,
             answered_count=candidate_stats[primary_id]["answered_count"],
         )
-
         alternatives: list[dict[str, Any]] = []
         for row in ranked[1:]:
             diagnosis_id = int(row["diagnosis_id"])
@@ -455,7 +497,6 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 answered_count=candidate_stats[diagnosis_id]["answered_count"],
             )
             alternatives.append(hypothesis)
-
         ranked_candidates = [
             {
                 "diagnosis_id": int(row["diagnosis_id"]),
@@ -465,17 +506,15 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             }
             for row in ranked
         ]
-
         return {
             "status": "neural_selected",
-            "message": "Найдено несколько подходящих диагнозов. Нейронная сеть выбрала наиболее вероятный.",
+            "message": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0434\u0438\u0430\u0433\u043d\u043e\u0437\u043e\u0432 \u0441 \u043e\u0434\u0438\u043d\u0430\u043a\u043e\u0432\u043e \u0441\u0438\u043b\u044c\u043d\u044b\u043c \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0435\u043c. \u041d\u0435\u0439\u0440\u043e\u043d\u043d\u0430\u044f \u0441\u0435\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043b\u0430 \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u044b\u0439.",
             "primary": primary_hypothesis,
             "alternatives": alternatives,
             "selection_method": "neural",
             "confidence": float(ranked[0]["probability"]),
             "ranked_candidates": ranked_candidates,
         }
-
     ranked_rules = sorted(filter_result["all"], key=lambda row: row["rule_score"], reverse=True)
     top_rows = ranked_rules[:3]
     alternatives = [
@@ -498,10 +537,11 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
     ]
     return {
         "status": "not_determined",
-        "message": "Однозначный диагноз не установлен. Показаны наиболее близкие гипотезы.",
+        "message": "\u041e\u0434\u043d\u043e\u0437\u043d\u0430\u0447\u043d\u044b\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0435 \u0433\u0438\u043f\u043e\u0442\u0435\u0437\u044b.",
         "primary": None,
         "alternatives": alternatives,
         "selection_method": "fallback",
         "confidence": None,
         "ranked_candidates": ranked_candidates,
     }
+

@@ -6,7 +6,7 @@
 - Визуальный редактор критериев диагноза без JSON-поля.
 - Разделение режимов create/edit во вкладках редактора.
 - Удалена вкладка «Проверка эталона» из UI редактора.
-- Решатель с rule-based фильтрацией и нейросетевым выбором при нескольких кандидатах.
+- Solver uses rule-based selection, and the neural ranker runs only on ambiguity (multiple full matches or a tie on max matched_count).
 - Статусы решателя: `determined`, `likely`, `neural_selected`, `not_determined`.
 
 ## Текущий backend-контракт

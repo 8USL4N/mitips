@@ -54,14 +54,68 @@ function emptyForm() {
   };
 }
 
+function parseRequiredNumber(value, fieldName) {
+  if (value === "" || value === null || value === undefined) {
+    throw new Error(`${fieldName} обязательно`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${fieldName} должно быть числом`);
+  }
+
+  return parsed;
+}
+
+function validateCharacteristicForm(form) {
+  if (!form.name.trim()) {
+    return "Название характеристики обязательно";
+  }
+
+  if (form.type !== "range") {
+    return "";
+  }
+
+  let allowedMin;
+  let allowedMax;
+  let normalMin;
+  let normalMax;
+  try {
+    allowedMin = parseRequiredNumber(form.range.allowedMin, "allowedMin");
+    allowedMax = parseRequiredNumber(form.range.allowedMax, "allowedMax");
+    normalMin = parseRequiredNumber(form.range.normalMin, "normalMin");
+    normalMax = parseRequiredNumber(form.range.normalMax, "normalMax");
+  } catch (err) {
+    return err.message;
+  }
+
+  if (allowedMin > allowedMax) {
+    return "allowedMin не может быть больше allowedMax";
+  }
+  if (normalMin > normalMax) {
+    return "normalMin не может быть больше normalMax";
+  }
+  if (normalMin < allowedMin || normalMax > allowedMax) {
+    return "normal должен быть внутри allowed";
+  }
+
+  return "";
+}
+
 function buildPayload(form) {
   if (form.type === "range") {
     return {
       name: form.name.trim(),
       type: "range",
       unit: form.unit.trim(),
-      allowed: [Number(form.range.allowedMin), Number(form.range.allowedMax)],
-      normal: [Number(form.range.normalMin), Number(form.range.normalMax)]
+      allowed: [
+        parseRequiredNumber(form.range.allowedMin, "allowedMin"),
+        parseRequiredNumber(form.range.allowedMax, "allowedMax")
+      ],
+      normal: [
+        parseRequiredNumber(form.range.normalMin, "normalMin"),
+        parseRequiredNumber(form.range.normalMax, "normalMax")
+      ]
     };
   }
 
@@ -142,6 +196,13 @@ export default function CharacteristicsTab() {
   }
 
   async function createNew() {
+    const validationError = validateCharacteristicForm(form);
+    if (validationError) {
+      setError(validationError);
+      setMessage("");
+      return;
+    }
+
     try {
       const created = await createCharacteristic(buildPayload(form));
       await refresh();
@@ -158,6 +219,13 @@ export default function CharacteristicsTab() {
   async function saveExisting() {
     if (!selectedId) {
       setError("Выберите характеристику");
+      return;
+    }
+
+    const validationError = validateCharacteristicForm(form);
+    if (validationError) {
+      setError(validationError);
+      setMessage("");
       return;
     }
     try {

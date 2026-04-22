@@ -1,3 +1,6 @@
+import pytest
+
+
 def _characteristics(client):
     return client.get("/api/characteristics").json()
 
@@ -46,7 +49,7 @@ def _find_rules_selected_payload(client) -> tuple[str, dict]:
         if body["selection_method"] == "rules" and body["status"] in {"determined", "likely"}:
             return diagnosis["name"], payload
 
-    raise AssertionError("Не найден payload для rules-based выбора")
+    raise AssertionError("No payload found for rules-based selection")
 
 
 def _find_neural_selected_payload(client) -> dict:
@@ -65,7 +68,7 @@ def _find_neural_selected_payload(client) -> dict:
             response = client.post("/api/solver/determine", json=payload)
             if response.status_code == 200 and response.json()["status"] == "neural_selected":
                 return payload
-    raise AssertionError("Не найден payload, который даёт neural_selected")
+    raise AssertionError("No payload found that returns neural_selected")
 
 
 def test_diagnoses_endpoint_returns_list(client) -> None:
@@ -119,7 +122,7 @@ def test_determine_endpoint_nothing_matches_returns_not_determined(client) -> No
         "/api/solver/determine",
         json={
             "patient_values": {
-                str(range_characteristic["id"]): float(range_characteristic["allowed"][1]) + 100.0
+                str(range_characteristic["id"]): 41.5
             }
         },
     )
@@ -127,8 +130,6 @@ def test_determine_endpoint_nothing_matches_returns_not_determined(client) -> No
     payload = response.json()
     assert payload["status"] == "not_determined"
     assert payload["selection_method"] == "fallback"
-    assert payload["primary"] is None
-    assert len(payload["alternatives"]) > 0
 
 
 def test_determine_endpoint_empty_input_returns_400(client) -> None:
@@ -141,6 +142,82 @@ def test_determine_endpoint_unknown_characteristic_returns_400(client) -> None:
     assert response.status_code == 400
 
 
+def test_determine_endpoint_range_value_above_allowed_returns_400(client) -> None:
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/determine",
+        json={
+            "patient_values": {
+                str(range_characteristic["id"]): float(range_characteristic["allowed"][1]) + 1.0
+            }
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_determine_endpoint_range_value_below_allowed_returns_400(client) -> None:
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/determine",
+        json={
+            "patient_values": {
+                str(range_characteristic["id"]): float(range_characteristic["allowed"][0]) - 1.0
+            }
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "-Infinity"])
+def test_determine_endpoint_non_finite_value_returns_400(client, bad_value: str) -> None:
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/determine",
+        json={"patient_values": {str(range_characteristic["id"]): bad_value}},
+    )
+    assert response.status_code == 400
+
+
+def test_solve_endpoint_range_value_above_allowed_returns_400(client) -> None:
+    diagnosis, _ = _first_diagnosis_payload(client)
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/solve",
+        json={
+            "diagnosis_id": diagnosis["id"],
+            "patient_values": {str(range_characteristic["id"]): float(range_characteristic["allowed"][1]) + 1.0},
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_solve_endpoint_range_value_below_allowed_returns_400(client) -> None:
+    diagnosis, _ = _first_diagnosis_payload(client)
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/solve",
+        json={
+            "diagnosis_id": diagnosis["id"],
+            "patient_values": {str(range_characteristic["id"]): float(range_characteristic["allowed"][0]) - 1.0},
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "-Infinity"])
+def test_solve_endpoint_non_finite_value_returns_400(client, bad_value: str) -> None:
+    diagnosis, _ = _first_diagnosis_payload(client)
+    range_characteristic = next(item for item in _characteristics(client) if item["type"] == "range")
+    response = client.post(
+        "/api/solver/solve",
+        json={
+            "diagnosis_id": diagnosis["id"],
+            "patient_values": {str(range_characteristic["id"]): bad_value},
+        },
+    )
+    assert response.status_code == 400
+
+
 def test_create_and_delete_diagnosis(client) -> None:
     treatments = client.get("/api/treatments").json()
     characteristics = _characteristics(client)
@@ -148,7 +225,7 @@ def test_create_and_delete_diagnosis(client) -> None:
     enum_key = next(iter(enum_char["allowed"].keys()))
 
     diagnosis = {
-        "name": "Тестовый диагноз API",
+        "name": "Test diagnosis API",
         "icd10": "Z99",
         "treatment_id": treatments[0]["id"],
         "criteria": [

@@ -34,9 +34,13 @@ docker compose up --build -d
 
 Pipeline:
 
-1. Нормализация и валидация `patient_values` (включая ошибку 400 для неизвестных characteristic id).
-2. Rule-based фильтрация кандидатов.
-3. Если кандидатов больше одного, выбирается диагноз через нейросетевой ранкер.
+1. Normalize and validate `patient_values` (including HTTP 400 for unknown characteristic id and invalid range values).
+2. Build rule-based metrics for all diagnoses.
+3. Use neural ranking only for ambiguity:
+   - multiple full matches (`matched_count == criteria_count`), or
+   - multiple candidates with the same maximum `matched_count` among viable diagnoses.
+4. If there is exactly one full match, it is selected by rules (`determined`).
+5. If there is no full match and exactly one best partial match, it is selected by rules (`likely`).
 
 Ответ содержит:
 

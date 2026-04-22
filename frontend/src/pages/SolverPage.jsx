@@ -17,6 +17,42 @@ function cleanValues(values) {
   return result;
 }
 
+function validateRangeValues(values, characteristics) {
+  for (const item of characteristics) {
+    if (item.type !== "range") {
+      continue;
+    }
+
+    const key = String(item.id);
+    const rawValue = values[key];
+    if (rawValue === "" || rawValue === undefined || rawValue === null) {
+      continue;
+    }
+
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) {
+      return `${item.name}: значение должно быть числом`;
+    }
+
+    if (!Array.isArray(item.allowed) || item.allowed.length !== 2) {
+      return `${item.name}: некорректно настроен допустимый диапазон`;
+    }
+
+    const min = Number(item.allowed[0]);
+    const max = Number(item.allowed[1]);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return `${item.name}: некорректно настроен допустимый диапазон`;
+    }
+
+    if (value < min || value > max) {
+      const unitPart = item.unit ? ` ${item.unit}` : "";
+      return `${item.name}: значение должно быть в диапазоне ${min}-${max}${unitPart}`;
+    }
+  }
+
+  return "";
+}
+
 export default function SolverPage() {
   const [bodySystems, setBodySystems] = useState([]);
   const [characteristics, setCharacteristics] = useState([]);
@@ -56,6 +92,12 @@ export default function SolverPage() {
     const payload = cleanValues(values);
     if (Object.keys(payload).length === 0) {
       setError("Введите хотя бы одно значение характеристики");
+      setResult(null);
+      return;
+    }
+    const validationError = validateRangeValues(payload, characteristics);
+    if (validationError) {
+      setError(validationError);
       setResult(null);
       return;
     }
