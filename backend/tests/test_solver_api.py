@@ -104,6 +104,7 @@ def test_determine_endpoint_exact_match_hypothesis_refutation_based(client) -> N
     assert body["primary"]["actions"][0] == f"Диагноз: {diagnosis_name}"
     assert body["ranked_candidates"][0]["source"] == "hypothesis_refutation"
     assert body["alternatives"] == []
+    assert all(item["diagnosis"] != diagnosis_name for item in body["rejected_hypotheses"])
 
 
 def test_determine_endpoint_multiple_candidates_uses_neural(client) -> None:
@@ -114,11 +115,12 @@ def test_determine_endpoint_multiple_candidates_uses_neural(client) -> None:
     assert result["status"] == "neural_selected"
     assert result["selection_method"] == "neural"
     assert result["primary"] is not None
-    assert result["alternatives"]
+    assert result["alternatives"] == []
+    assert "rejected_hypotheses" in result
     assert result["confidence"] is not None
     assert result["ranked_candidates"]
     assert result["primary"]["actions"][0] == f"Диагноз: {result['primary']['diagnosis']}"
-    assert all(item["actions"][0] == f"Диагноз: {item['diagnosis']}" for item in result["alternatives"])
+    assert all(item["diagnosis"] != result["primary"]["diagnosis"] for item in result["rejected_hypotheses"])
 
 
 def test_determine_endpoint_nothing_matches_returns_not_determined(client) -> None:
@@ -135,7 +137,9 @@ def test_determine_endpoint_nothing_matches_returns_not_determined(client) -> No
     payload = response.json()
     assert payload["status"] == "not_determined"
     assert payload["selection_method"] == "fallback"
-    assert all(item["actions"][0] == f"Диагноз: {item['diagnosis']}" for item in payload["alternatives"])
+    assert payload["alternatives"] == []
+    assert "rejected_hypotheses" in payload
+    assert all(item["actions"][0] == f"Диагноз: {item['diagnosis']}" for item in payload["rejected_hypotheses"])
 
 
 def test_determine_endpoint_empty_input_returns_400(client) -> None:

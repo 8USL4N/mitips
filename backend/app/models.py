@@ -171,6 +171,7 @@ class DiagnosisHypothesis(BaseModel):
     treatment_name: str
     actions: list[str]
     explanation: list[ExplanationRow]
+    rejection_reasons: list[ExplanationRow] = Field(default_factory=list)
     matched_count: int
     answered_count: int
     total_count: int
@@ -182,6 +183,7 @@ class SolveBySymptomsResponse(BaseModel):
     message: str
     primary: DiagnosisHypothesis | None
     alternatives: list[DiagnosisHypothesis] = Field(default_factory=list)
+    rejected_hypotheses: list[DiagnosisHypothesis] = Field(default_factory=list)
     selection_method: Literal["hypothesis_refutation", "neural", "fallback"]
     confidence: float | None = None
     ranked_candidates: list[RankedCandidate] = Field(default_factory=list)

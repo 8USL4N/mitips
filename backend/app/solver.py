@@ -35,9 +35,12 @@ def _build_enum_views(
     return expected_view, actual_view, actual_key == expected_key
 
 
-def _load_solver_context(service: KnowledgeService) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
+def _load_solver_context(
+    service: KnowledgeService,
+) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]], list[dict[str, Any]]]:
     characteristics = service.list_characteristics()
     characteristic_map = {int(item["id"]): item for item in characteristics}
+    body_systems = service.list_body_systems()
     diagnoses: list[dict[str, Any]] = []
 
     for item in service.list_diagnoses():
@@ -45,7 +48,47 @@ def _load_solver_context(service: KnowledgeService) -> tuple[list[dict[str, Any]
         if diagnosis:
             diagnoses.append(diagnosis)
 
-    return diagnoses, characteristic_map
+    return diagnoses, characteristic_map, body_systems
+
+
+def _build_characteristic_group_map(body_systems: list[dict[str, Any]]) -> dict[int, set[int]]:
+    characteristic_groups: dict[int, set[int]] = {}
+    for system in body_systems:
+        system_id = int(system["id"])
+        for characteristic_id in system.get("characteristic_ids") or []:
+            characteristic_groups.setdefault(int(characteristic_id), set()).add(system_id)
+    return characteristic_groups
+
+
+def _row_has_close_refutation(row: dict[str, Any]) -> bool:
+    return row["matched_count"] > 0 and row["contradiction_count"] > 0
+
+
+def _scope_diagnoses_to_close_groups(
+    diagnoses: list[dict[str, Any]],
+    patient_values: dict[str, Any],
+    body_systems: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    characteristic_groups = _build_characteristic_group_map(body_systems)
+    if not characteristic_groups:
+        return diagnoses
+
+    active_groups: set[int] = set()
+    for key in patient_values:
+        active_groups.update(characteristic_groups.get(int(key), set()))
+
+    if not active_groups:
+        return diagnoses
+
+    scoped: list[dict[str, Any]] = []
+    for diagnosis in diagnoses:
+        diagnosis_groups: set[int] = set()
+        for criterion in diagnosis["criteria"]:
+            diagnosis_groups.update(characteristic_groups.get(int(criterion["characteristic_id"]), set()))
+        if diagnosis_groups & active_groups:
+            scoped.append(diagnosis)
+
+    return scoped or diagnoses
 
 
 def _with_diagnosis_action(diagnosis_name: str, actions: list[str]) -> list[str]:
@@ -321,11 +364,36 @@ def _build_hypothesis(
         "treatment_name": diagnosis["treatment_name"],
         "actions": _with_diagnosis_action(diagnosis["name"], diagnosis["actions"]),
         "explanation": explanation,
+        "rejection_reasons": [row for row in explanation if row["actual"] is not None and not row["match"]],
         "matched_count": matched_count,
         "answered_count": answered_count,
         "total_count": len(diagnosis["criteria"]),
         "missing_characteristics": missing_characteristics,
     }
+
+
+def _build_rejected_hypotheses(
+    *,
+    rows: list[dict[str, Any]],
+    diagnosis_by_id: dict[int, dict[str, Any]],
+    patient_values: dict[str, Any],
+    characteristic_map: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    close_rejected_rows = [row for row in rows if _row_has_close_refutation(row)]
+    close_rejected_rows.sort(
+        key=lambda row: (row["matched_count"], -row["contradiction_count"], row["hypothesis_score"]),
+        reverse=True,
+    )
+    return [
+        _build_hypothesis(
+            diagnosis=diagnosis_by_id[int(row["diagnosis_id"])],
+            patient_values=patient_values,
+            characteristic_map=characteristic_map,
+            answered_count=row["answered_count"],
+        )
+        for row in close_rejected_rows
+    ]
+
 
 
 def solve_validate_selected(
@@ -395,18 +463,34 @@ def solve_validate_selected(
 
 def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[str, Any]:
     service = KnowledgeService(session)
-    diagnoses, characteristic_map = _load_solver_context(service)
+    context = _load_solver_context(service)
+    if len(context) == 2:
+        diagnoses, characteristic_map = context
+        body_systems: list[dict[str, Any]] = []
+    else:
+        diagnoses, characteristic_map, body_systems = context
     cleaned_values = _clean_patient_values(patient_values, characteristic_map)
     if not cleaned_values:
         raise ValueError("Нужно ввести хотя бы одно значение характеристики")
     if not diagnoses:
         raise ValueError("Не удалось выполнить диагностику: нет доступных диагнозов")
-    filter_result = evaluate_hypotheses_by_refutation(
+    scoped_diagnoses = _scope_diagnoses_to_close_groups(
         diagnoses=diagnoses,
+        patient_values=cleaned_values,
+        body_systems=body_systems,
+    )
+    filter_result = evaluate_hypotheses_by_refutation(
+        diagnoses=scoped_diagnoses,
         patient_values=cleaned_values,
         characteristic_map=characteristic_map,
     )
-    diagnosis_by_id = {int(item["id"]): item for item in diagnoses}
+    diagnosis_by_id = {int(item["id"]): item for item in scoped_diagnoses}
+    rejected_hypotheses = _build_rejected_hypotheses(
+        rows=filter_result["rejected"],
+        diagnosis_by_id=diagnosis_by_id,
+        patient_values=cleaned_values,
+        characteristic_map=characteristic_map,
+    )
     selection = _select_candidate_group(filter_result["all"])
     selected_rows = selection["rows"]
     if selection["method"] == "hypothesis_refutation":
@@ -434,6 +518,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             "message": message,
             "primary": hypothesis,
             "alternatives": [],
+            "rejected_hypotheses": rejected_hypotheses,
             "selection_method": "hypothesis_refutation",
             "confidence": float(confidence),
             "ranked_candidates": [
@@ -448,7 +533,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
     if selection["method"] == "neural":
         snapshot = {
             "characteristics": list(characteristic_map.values()),
-            "diagnoses": diagnoses,
+            "diagnoses": scoped_diagnoses,
         }
         candidate_ids = [int(item["diagnosis_id"]) for item in selected_rows]
         ranked = _NEURAL_RANKER.rank(
@@ -480,7 +565,8 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 "status": "not_determined",
                 "message": "Все диагностические гипотезы опровергнуты противоречиями или не имеют совпадений. Показаны ближайшие альтернативы.",
                 "primary": None,
-                "alternatives": fallback_alternatives,
+                "alternatives": [],
+                "rejected_hypotheses": rejected_hypotheses,
                 "selection_method": "fallback",
                 "confidence": None,
                 "ranked_candidates": fallback_ranked,
@@ -516,7 +602,8 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             "status": "neural_selected",
             "message": "Найдено несколько равных не опровергнутых гипотез. Нейронная сеть выбрала наиболее вероятную.",
             "primary": primary_hypothesis,
-            "alternatives": alternatives,
+            "alternatives": [],
+            "rejected_hypotheses": rejected_hypotheses,
             "selection_method": "neural",
             "confidence": float(ranked[0]["probability"]),
             "ranked_candidates": ranked_candidates,
@@ -545,7 +632,8 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
         "status": "not_determined",
         "message": "Все диагностические гипотезы опровергнуты противоречиями или не имеют совпадений. Показаны ближайшие альтернативы.",
         "primary": None,
-        "alternatives": alternatives,
+        "alternatives": [],
+        "rejected_hypotheses": rejected_hypotheses,
         "selection_method": "fallback",
         "confidence": None,
         "ranked_candidates": ranked_candidates,

@@ -1,16 +1,12 @@
-function HypothesisCard({ item, title }) {
+function ResultDiagnosisCard({ item }) {
   return (
-    <article className="result-card">
-      {title && <h4>{title}</h4>}
+    <article className="result-card result-card-primary">
       <h3>
-        {item.diagnosis}
+        Итоговый диагноз экспертной системы: {item.diagnosis}
         {item.icd10 ? ` (${item.icd10})` : ""}
       </h3>
       <p>
         Лечение: <strong>{item.treatment_name}</strong>
-      </p>
-      <p>
-        Опровержение гипотезы: {item.matched_count}/{item.answered_count} совпадений из проверенных, критериев всего: {item.total_count}
       </p>
 
       <h4>План действий</h4>
@@ -19,28 +15,45 @@ function HypothesisCard({ item, title }) {
           <li key={`${action}-${index}`}>{action}</li>
         ))}
       </ol>
+    </article>
+  );
+}
 
-      <h4>Объяснение</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Характеристика</th>
-            <th>Ожидаемое</th>
-            <th>Введённое</th>
-            <th>Статус проверки</th>
-          </tr>
-        </thead>
-        <tbody>
-          {item.explanation.map((row, index) => (
-            <tr key={`${row.characteristic}-${index}`} className={row.match ? "row-ok" : "row-bad"}>
-              <td>{row.characteristic}</td>
-              <td>{row.expected}</td>
-              <td>{row.actual ?? "не указано"}</td>
-              <td>{row.match ? "Гипотеза не опровергнута" : "Противоречие"}</td>
+function RejectedHypothesisCard({ item }) {
+  const reasons = Array.isArray(item.rejection_reasons)
+    ? item.rejection_reasons
+    : (item.explanation || []).filter((row) => !row.match && row.actual !== null && row.actual !== undefined);
+
+  return (
+    <article className="result-card result-card-rejected">
+      <h4>
+        Отклонённая гипотеза: {item.diagnosis}
+        {item.icd10 ? ` (${item.icd10})` : ""}
+      </h4>
+      {reasons.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>Характеристика</th>
+              <th>Ожидалось</th>
+              <th>Введено</th>
+              <th>Почему не подошло</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {reasons.map((row, index) => (
+              <tr key={`${row.characteristic}-${index}`} className="row-bad">
+                <td>{row.characteristic}</td>
+                <td>{row.expected}</td>
+                <td>{row.actual ?? "не указано"}</td>
+                <td>Противоречит критерию диагноза</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">Явных противоречий по введённым признакам нет.</p>
+      )}
     </article>
   );
 }
@@ -55,16 +68,6 @@ function selectionMethodLabel(method) {
   return "Fallback";
 }
 
-function sourceLabel(source) {
-  if (source === "neural") {
-    return "Нейронная сеть";
-  }
-  if (source === "hypothesis_refutation") {
-    return "Опровержение гипотезы";
-  }
-  return source;
-}
-
 export default function DiagnosisResult({ result }) {
   if (!result) {
     return null;
@@ -72,7 +75,9 @@ export default function DiagnosisResult({ result }) {
 
   const statusClass = `status-banner status-${result.status}`;
   const primary = result.primary;
-  const hasAlternatives = Array.isArray(result.alternatives) && result.alternatives.length > 0;
+  const rejectedHypotheses = Array.isArray(result.rejected_hypotheses)
+    ? result.rejected_hypotheses
+    : [];
 
   return (
     <div className="result-block">
@@ -80,7 +85,7 @@ export default function DiagnosisResult({ result }) {
 
       {result.status === "neural_selected" && (
         <div className="alert">
-          Найдено несколько равных не опровергнутых гипотез. Нейронная сеть выбрала наиболее вероятную.
+          Найдено несколько равных не опровергнутых гипотез. Нейронная сеть выбрала итоговый диагноз.
         </div>
       )}
 
@@ -94,45 +99,31 @@ export default function DiagnosisResult({ result }) {
         )}
       </div>
 
-      {primary && <HypothesisCard item={primary} />}
-
-      {Array.isArray(result.ranked_candidates) && result.ranked_candidates.length > 0 && (
-        <div>
-          <h4>Ранжированные кандидаты</h4>
-          <table>
-            <thead>
-              <tr>
-                <th>Диагноз</th>
-                <th>Оценка</th>
-                <th>Источник</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.ranked_candidates.map((item) => (
-                <tr key={item.diagnosis_id}>
-                  <td>{item.diagnosis}</td>
-                  <td>{Math.round(item.score * 100)}%</td>
-                  <td>{sourceLabel(item.source)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {primary ? (
+        <ResultDiagnosisCard item={primary} />
+      ) : (
+        <article className="result-card result-card-primary">
+          <h3>Итоговый диагноз экспертной системы не определён</h3>
+          <p className="muted">Все близкие гипотезы были отклонены или данных недостаточно.</p>
+        </article>
       )}
 
-      {hasAlternatives && (
-        <div className="accordion-list">
-          {result.alternatives.map((item, index) => (
-            <details key={item.diagnosis_id} open={index === 0}>
+      <section className="accordion-list">
+        <h3>Отклонённые гипотезы</h3>
+        {rejectedHypotheses.length > 0 ? (
+          rejectedHypotheses.map((item) => (
+            <details key={item.diagnosis_id}>
               <summary>
                 {item.diagnosis}
                 {item.icd10 ? ` (${item.icd10})` : ""}
               </summary>
-              <HypothesisCard item={item} title="Альтернативный кандидат" />
+              <RejectedHypothesisCard item={item} />
             </details>
-          ))}
-        </div>
-      )}
+          ))
+        ) : (
+          <p className="muted">Близких отклонённых гипотез с противоречиями нет.</p>
+        )}
+      </section>
     </div>
   );
 }
