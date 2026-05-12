@@ -158,7 +158,7 @@ class RankedCandidate(BaseModel):
     diagnosis_id: int
     diagnosis: str
     score: float
-    source: Literal["rules", "neural"]
+    source: Literal["hypothesis_refutation", "neural"]
 
 
 class DiagnosisHypothesis(BaseModel):
@@ -179,6 +179,6 @@ class SolveBySymptomsResponse(BaseModel):
     message: str
     primary: DiagnosisHypothesis | None
     alternatives: list[DiagnosisHypothesis] = Field(default_factory=list)
-    selection_method: Literal["rules", "neural", "fallback"]
+    selection_method: Literal["hypothesis_refutation", "neural", "fallback"]
     confidence: float | None = None
     ranked_candidates: list[RankedCandidate] = Field(default_factory=list)

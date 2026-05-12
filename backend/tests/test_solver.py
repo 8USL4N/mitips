@@ -71,7 +71,7 @@ def _run_synthetic_determine(
     return solve_by_symptoms(session, patient_values)
 
 
-def test_2_of_2_beats_2_of_3_rules_determined(monkeypatch: pytest.MonkeyPatch, client) -> None:
+def test_2_of_2_beats_2_of_3_hypothesis_refutation_determined(monkeypatch: pytest.MonkeyPatch, client) -> None:
     chars = [_range_char(1, "c1"), _range_char(2, "c2"), _range_char(3, "c3")]
     diag_a = _diagnosis(1, "A", [_range_criterion(1, "c1"), _range_criterion(2, "c2")])
     diag_b = _diagnosis(
@@ -89,9 +89,55 @@ def test_2_of_2_beats_2_of_3_rules_determined(monkeypatch: pytest.MonkeyPatch, c
             patient_values={"1": 15.0, "2": 15.0},
         )
 
-    assert result["selection_method"] == "rules"
+    assert result["selection_method"] == "hypothesis_refutation"
     assert result["status"] == "determined"
     assert result["primary"]["diagnosis"] == "A"
+    assert result["primary"]["actions"][0] == "Диагноз: A"
+    assert result["ranked_candidates"][0]["source"] == "hypothesis_refutation"
+    assert "Гипотеза не опровергнута" in result["message"]
+
+
+def test_contradicted_hypothesis_is_rejected(monkeypatch: pytest.MonkeyPatch, client) -> None:
+    chars = [_range_char(1, "c1"), _range_char(2, "c2")]
+    contradicted = _diagnosis(1, "A", [_range_criterion(1, "c1", 10.0, 20.0), _range_criterion(2, "c2")])
+    not_refuted = _diagnosis(2, "B", [_range_criterion(1, "c1", 25.0, 35.0)])
+
+    with db.SessionLocal() as session:
+        result = _run_synthetic_determine(
+            monkeypatch,
+            session,
+            diagnoses=[contradicted, not_refuted],
+            characteristics=chars,
+            patient_values={"1": 30.0, "2": 15.0},
+        )
+
+    assert result["selection_method"] == "hypothesis_refutation"
+    assert result["status"] == "determined"
+    assert result["primary"]["diagnosis"] == "B"
+    assert result["primary"]["actions"][0] == "Диагноз: B"
+
+
+def test_all_refuted_hypotheses_return_fallback_with_diagnosis_actions(monkeypatch: pytest.MonkeyPatch, client) -> None:
+    chars = [_range_char(1, "c1")]
+    diag_a = _diagnosis(1, "A", [_range_criterion(1, "c1", 10.0, 20.0)])
+    diag_b = _diagnosis(2, "B", [_range_criterion(1, "c1", 30.0, 40.0)])
+
+    with db.SessionLocal() as session:
+        result = _run_synthetic_determine(
+            monkeypatch,
+            session,
+            diagnoses=[diag_a, diag_b],
+            characteristics=chars,
+            patient_values={"1": 25.0},
+        )
+
+    assert result["selection_method"] == "fallback"
+    assert result["status"] == "not_determined"
+    assert result["primary"] is None
+    assert result["alternatives"]
+    assert all(item["actions"][0] == f"Диагноз: {item['diagnosis']}" for item in result["alternatives"])
+    assert all(item["source"] == "hypothesis_refutation" for item in result["ranked_candidates"])
+    assert "опровергнуты противоречиями" in result["message"]
 
 
 def test_multiple_full_matches_use_neural(monkeypatch: pytest.MonkeyPatch, client) -> None:
@@ -116,6 +162,8 @@ def test_multiple_full_matches_use_neural(monkeypatch: pytest.MonkeyPatch, clien
 
     assert result["selection_method"] == "neural"
     assert result["status"] == "neural_selected"
+    assert result["primary"]["actions"][0] == "Диагноз: B"
+    assert result["alternatives"][0]["actions"][0] == "Диагноз: A"
     assert candidate_ids_out == [[1, 2]]
 
 
@@ -165,7 +213,7 @@ def test_equal_best_partials_use_neural_and_only_top_group(monkeypatch: pytest.M
     assert candidate_ids_out == [[1, 2]]
 
 
-def test_single_best_partial_is_rules_likely(monkeypatch: pytest.MonkeyPatch, client) -> None:
+def test_single_best_partial_is_hypothesis_refutation_likely(monkeypatch: pytest.MonkeyPatch, client) -> None:
     chars = [_range_char(1, "c1"), _range_char(2, "c2"), _range_char(3, "c3"), _range_char(4, "c4"), _range_char(5, "c5")]
     diag_a = _diagnosis(
         1,
@@ -193,9 +241,11 @@ def test_single_best_partial_is_rules_likely(monkeypatch: pytest.MonkeyPatch, cl
             patient_values={"1": 15.0, "2": 15.0, "3": 15.0},
         )
 
-    assert result["selection_method"] == "rules"
+    assert result["selection_method"] == "hypothesis_refutation"
     assert result["status"] == "likely"
     assert result["primary"]["diagnosis"] == "A"
+    assert result["primary"]["actions"][0] == "Диагноз: A"
+    assert result["ranked_candidates"][0]["source"] == "hypothesis_refutation"
 
 
 def test_2_of_2_beats_3_of_5_by_full_match_priority(monkeypatch: pytest.MonkeyPatch, client) -> None:
@@ -222,9 +272,12 @@ def test_2_of_2_beats_3_of_5_by_full_match_priority(monkeypatch: pytest.MonkeyPa
             patient_values={"1": 15.0, "2": 15.0, "3": 15.0},
         )
 
-    assert result["selection_method"] == "rules"
+    assert result["selection_method"] == "hypothesis_refutation"
     assert result["status"] == "determined"
     assert result["primary"]["diagnosis"] == "A"
+    assert result["primary"]["actions"][0] == "Диагноз: A"
+    assert result["ranked_candidates"][0]["source"] == "hypothesis_refutation"
+    assert "Гипотеза не опровергнута" in result["message"]
 
 
 @pytest.mark.parametrize("value", [101.0, -1.0, float("nan"), float("inf"), float("-inf")])

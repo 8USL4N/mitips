@@ -48,6 +48,12 @@ def _load_solver_context(service: KnowledgeService) -> tuple[list[dict[str, Any]
     return diagnoses, characteristic_map
 
 
+def _with_diagnosis_action(diagnosis_name: str, actions: list[str]) -> list[str]:
+    diagnosis_action = f"Диагноз: {diagnosis_name}"
+    treatment_actions = [action for action in actions if action != diagnosis_action]
+    return [diagnosis_action, *treatment_actions]
+
+
 def _clean_patient_values(
     patient_values: dict[str, Any],
     characteristic_map: dict[int, dict[str, Any]],
@@ -135,7 +141,7 @@ def _matches_criterion(criterion: dict[str, Any], actual: Any) -> bool:
     return str(actual) == str(criterion["expected_enum_key"])
 
 
-def _rule_score(row: dict[str, Any]) -> float:
+def _hypothesis_score(row: dict[str, Any]) -> float:
     return (
         (row["specificity"] * 0.65)
         + (row["coverage"] * 0.35)
@@ -143,7 +149,7 @@ def _rule_score(row: dict[str, Any]) -> float:
     )
 
 
-def filter_candidates_by_rules(
+def evaluate_hypotheses_by_refutation(
     diagnoses: list[dict[str, Any]],
     patient_values: dict[str, Any],
     characteristic_map: dict[int, dict[str, Any]],
@@ -206,9 +212,9 @@ def filter_candidates_by_rules(
             "specificity": (matched_count / criteria_count) if criteria_count else 0.0,
             "missing_characteristics": missing_characteristics,
             "trace": diagnosis_trace,
-            "rule_score": 0.0,
+            "hypothesis_score": 0.0,
         }
-        row["rule_score"] = _rule_score(row)
+        row["hypothesis_score"] = _hypothesis_score(row)
         all_rows.append(row)
         trace.append({"diagnosis_id": row["diagnosis_id"], "events": diagnosis_trace})
 
@@ -234,7 +240,7 @@ def _select_candidate_group(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     full_matches = [row for row in viable if row["matched_count"] == row["criteria_count"]]
     if len(full_matches) == 1:
-        return {"method": "rules", "status": "determined", "rows": full_matches}
+        return {"method": "hypothesis_refutation", "status": "determined", "rows": full_matches}
     if len(full_matches) > 1:
         return {"method": "neural", "status": "neural_selected", "rows": full_matches}
     if not viable:
@@ -242,7 +248,7 @@ def _select_candidate_group(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     max_matched = max(row["matched_count"] for row in viable)
     top_rows = [row for row in viable if row["matched_count"] == max_matched]
     if len(top_rows) == 1:
-        return {"method": "rules", "status": "likely", "rows": top_rows}
+        return {"method": "hypothesis_refutation", "status": "likely", "rows": top_rows}
     return {"method": "neural", "status": "neural_selected", "rows": top_rows}
 
 def _build_hypothesis(
@@ -313,7 +319,7 @@ def _build_hypothesis(
         "diagnosis": diagnosis["name"],
         "icd10": diagnosis.get("icd10"),
         "treatment_name": diagnosis["treatment_name"],
-        "actions": diagnosis["actions"],
+        "actions": _with_diagnosis_action(diagnosis["name"], diagnosis["actions"]),
         "explanation": explanation,
         "matched_count": matched_count,
         "answered_count": answered_count,
@@ -381,7 +387,7 @@ def solve_validate_selected(
         "diagnosis": diagnosis["name"],
         "icd10": diagnosis.get("icd10"),
         "treatment_name": diagnosis["treatment_name"],
-        "actions": diagnosis["actions"],
+        "actions": _with_diagnosis_action(diagnosis["name"], diagnosis["actions"]),
         "explanation": explanation,
         "matched_count": matched_count,
         "total_count": len(explanation),
@@ -395,7 +401,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
         raise ValueError("Нужно ввести хотя бы одно значение характеристики")
     if not diagnoses:
         raise ValueError("Не удалось выполнить диагностику: нет доступных диагнозов")
-    filter_result = filter_candidates_by_rules(
+    filter_result = evaluate_hypotheses_by_refutation(
         diagnoses=diagnoses,
         patient_values=cleaned_values,
         characteristic_map=characteristic_map,
@@ -403,7 +409,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
     diagnosis_by_id = {int(item["id"]): item for item in diagnoses}
     selection = _select_candidate_group(filter_result["all"])
     selected_rows = selection["rows"]
-    if selection["method"] == "rules":
+    if selection["method"] == "hypothesis_refutation":
         row = selected_rows[0]
         diagnosis = diagnosis_by_id[row["diagnosis_id"]]
         hypothesis = _build_hypothesis(
@@ -419,23 +425,23 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 float(row["matched_count"]) / float(row["criteria_count"]) if row["criteria_count"] else 0.0
             )
         message = (
-            "\u0414\u0438\u0430\u0433\u043d\u043e\u0437 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u0435\u0442 \u0441\u043e \u0432\u0441\u0435\u043c\u0438 \u043a\u0440\u0438\u0442\u0435\u0440\u0438\u044f\u043c\u0438."
+            "Гипотеза не опровергнута: введённые признаки подтверждают все критерии диагноза."
             if status == "determined"
-            else "\u0412\u044b\u0431\u0440\u0430\u043d \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043f\u043e \u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u0443 \u0441\u043e\u0432\u043f\u0430\u0432\u0448\u0438\u0445 \u043f\u0440\u0438\u0437\u043d\u0430\u043a\u043e\u0432."
+            else "Гипотеза не опровергнута и имеет наибольшее число совпадений среди неполных гипотез."
         )
         return {
             "status": status,
             "message": message,
             "primary": hypothesis,
             "alternatives": [],
-            "selection_method": "rules",
+            "selection_method": "hypothesis_refutation",
             "confidence": float(confidence),
             "ranked_candidates": [
                 {
                     "diagnosis_id": int(diagnosis["id"]),
                     "diagnosis": diagnosis["name"],
-                    "score": float(max(0.0, row["rule_score"])),
-                    "source": "rules",
+                    "score": float(max(0.0, row["hypothesis_score"])),
+                    "source": "hypothesis_refutation",
                 }
             ],
         }
@@ -451,7 +457,7 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
             knowledge_snapshot=snapshot,
         )
         if not ranked:
-            fallback_rows = sorted(selected_rows, key=lambda item: item["rule_score"], reverse=True)[:3]
+            fallback_rows = sorted(selected_rows, key=lambda item: item["hypothesis_score"], reverse=True)[:3]
             fallback_alternatives = [
                 _build_hypothesis(
                     diagnosis=diagnosis_by_id[int(item["diagnosis_id"])],
@@ -465,14 +471,14 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
                 {
                     "diagnosis_id": int(item["diagnosis_id"]),
                     "diagnosis": diagnosis_by_id[int(item["diagnosis_id"])]["name"],
-                    "score": float(max(0.0, item["rule_score"])),
-                    "source": "rules",
+                    "score": float(max(0.0, item["hypothesis_score"])),
+                    "source": "hypothesis_refutation",
                 }
                 for item in fallback_rows
             ]
             return {
                 "status": "not_determined",
-                "message": "\u041e\u0434\u043d\u043e\u0437\u043d\u0430\u0447\u043d\u044b\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0435 \u0433\u0438\u043f\u043e\u0442\u0435\u0437\u044b.",
+                "message": "Все диагностические гипотезы опровергнуты противоречиями или не имеют совпадений. Показаны ближайшие альтернативы.",
                 "primary": None,
                 "alternatives": fallback_alternatives,
                 "selection_method": "fallback",
@@ -508,15 +514,15 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
         ]
         return {
             "status": "neural_selected",
-            "message": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0434\u0438\u0430\u0433\u043d\u043e\u0437\u043e\u0432 \u0441 \u043e\u0434\u0438\u043d\u0430\u043a\u043e\u0432\u043e \u0441\u0438\u043b\u044c\u043d\u044b\u043c \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0435\u043c. \u041d\u0435\u0439\u0440\u043e\u043d\u043d\u0430\u044f \u0441\u0435\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043b\u0430 \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u044b\u0439.",
+            "message": "Найдено несколько равных не опровергнутых гипотез. Нейронная сеть выбрала наиболее вероятную.",
             "primary": primary_hypothesis,
             "alternatives": alternatives,
             "selection_method": "neural",
             "confidence": float(ranked[0]["probability"]),
             "ranked_candidates": ranked_candidates,
         }
-    ranked_rules = sorted(filter_result["all"], key=lambda row: row["rule_score"], reverse=True)
-    top_rows = ranked_rules[:3]
+    ranked_hypotheses = sorted(filter_result["all"], key=lambda row: row["hypothesis_score"], reverse=True)
+    top_rows = ranked_hypotheses[:3]
     alternatives = [
         _build_hypothesis(
             diagnosis=diagnosis_by_id[int(row["diagnosis_id"])],
@@ -530,14 +536,14 @@ def solve_by_symptoms(session: Session, patient_values: dict[str, Any]) -> dict[
         {
             "diagnosis_id": int(row["diagnosis_id"]),
             "diagnosis": diagnosis_by_id[int(row["diagnosis_id"])]["name"],
-            "score": float(max(0.0, row["rule_score"])),
-            "source": "rules",
+            "score": float(max(0.0, row["hypothesis_score"])),
+            "source": "hypothesis_refutation",
         }
         for row in top_rows
     ]
     return {
         "status": "not_determined",
-        "message": "\u041e\u0434\u043d\u043e\u0437\u043d\u0430\u0447\u043d\u044b\u0439 \u0434\u0438\u0430\u0433\u043d\u043e\u0437 \u043d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0431\u043b\u0438\u0437\u043a\u0438\u0435 \u0433\u0438\u043f\u043e\u0442\u0435\u0437\u044b.",
+        "message": "Все диагностические гипотезы опровергнуты противоречиями или не имеют совпадений. Показаны ближайшие альтернативы.",
         "primary": None,
         "alternatives": alternatives,
         "selection_method": "fallback",

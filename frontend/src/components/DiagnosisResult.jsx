@@ -10,7 +10,7 @@ function HypothesisCard({ item, title }) {
         Лечение: <strong>{item.treatment_name}</strong>
       </p>
       <p>
-        Совпадений: {item.matched_count}/{item.answered_count} из проверенных, критериев всего: {item.total_count}
+        Опровержение гипотезы: {item.matched_count}/{item.answered_count} совпадений из проверенных, критериев всего: {item.total_count}
       </p>
 
       <h4>План действий</h4>
@@ -27,7 +27,7 @@ function HypothesisCard({ item, title }) {
             <th>Характеристика</th>
             <th>Ожидаемое</th>
             <th>Введённое</th>
-            <th>Совпало</th>
+            <th>Статус проверки</th>
           </tr>
         </thead>
         <tbody>
@@ -36,7 +36,7 @@ function HypothesisCard({ item, title }) {
               <td>{row.characteristic}</td>
               <td>{row.expected}</td>
               <td>{row.actual ?? "не указано"}</td>
-              <td>{row.match ? "Да" : "Нет"}</td>
+              <td>{row.match ? "Гипотеза не опровергнута" : "Противоречие"}</td>
             </tr>
           ))}
         </tbody>
@@ -49,8 +49,8 @@ function selectionMethodLabel(method) {
   if (method === "neural") {
     return "Нейронная сеть";
   }
-  if (method === "rules") {
-    return "Правила";
+  if (method === "hypothesis_refutation") {
+    return "Опровержение гипотезы";
   }
   return "Fallback";
 }
@@ -59,8 +59,8 @@ function sourceLabel(source) {
   if (source === "neural") {
     return "Нейронная сеть";
   }
-  if (source === "rules") {
-    return "Правила";
+  if (source === "hypothesis_refutation") {
+    return "Опровержение гипотезы";
   }
   return source;
 }
@@ -80,7 +80,7 @@ export default function DiagnosisResult({ result }) {
 
       {result.status === "neural_selected" && (
         <div className="alert">
-          Найдено несколько подходящих диагнозов. Нейронная сеть выбрала наиболее вероятный.
+          Найдено несколько равных не опровергнутых гипотез. Нейронная сеть выбрала наиболее вероятную.
         </div>
       )}
 
