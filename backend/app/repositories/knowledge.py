@@ -1,4 +1,4 @@
-﻿from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.orm import (
@@ -126,7 +126,7 @@ class KnowledgeRepository:
     def list_treatments(self) -> list[Treatment]:
         statement = (
             select(Treatment)
-            .options(joinedload(Treatment.actions))
+            .options(joinedload(Treatment.actions), joinedload(Treatment.diagnoses))
             .order_by(Treatment.name)
         )
         return list(self.session.scalars(statement).unique().all())
@@ -135,9 +135,9 @@ class KnowledgeRepository:
         statement = (
             select(Treatment)
             .where(Treatment.id == treatment_id)
-            .options(joinedload(Treatment.actions))
+            .options(joinedload(Treatment.actions), joinedload(Treatment.diagnoses))
         )
-        return self.session.scalar(statement)
+        return self.session.scalars(statement).unique().first()
 
     def get_treatment_by_name(self, name: str) -> Treatment | None:
         return self.session.scalar(select(Treatment).where(Treatment.name == name))

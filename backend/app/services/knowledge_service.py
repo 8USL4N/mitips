@@ -11,6 +11,9 @@ from app.orm import BodySystem
 from app.repositories.knowledge import KnowledgeRepository
 
 
+_UNASSIGNED_TREATMENT_NAME = "Лечение не назначено"
+
+
 class KnowledgeService:
     def __init__(self, session: Session) -> None:
         self.repo = KnowledgeRepository(session)
@@ -91,10 +94,14 @@ class KnowledgeService:
     @classmethod
     def _serialize_treatment(cls, item) -> dict[str, Any]:
         actions = [cls._repair_mojibake_text(row.action) for row in sorted(item.actions, key=lambda row: row.position)]
+        linked_diagnoses = sorted(item.diagnoses, key=lambda row: row.name) if hasattr(item, "diagnoses") else []
+        primary_diagnosis = linked_diagnoses[0] if linked_diagnoses else None
         return {
             "id": item.id,
             "name": cls._repair_mojibake_text(item.name),
             "actions": actions,
+            "diagnosis_id": primary_diagnosis.id if primary_diagnosis else None,
+            "diagnosis_name": cls._repair_mojibake_text(primary_diagnosis.name) if primary_diagnosis else None,
         }
 
     @classmethod
@@ -547,13 +554,42 @@ class KnowledgeService:
                         f"Для характеристики '{characteristic.name}' неизвестный expected_enum_key='{expected_enum_key}'"
                     )
 
+    def _get_or_create_unassigned_treatment(self):
+        treatment = self.repo.get_treatment_by_name(_UNASSIGNED_TREATMENT_NAME)
+        if treatment:
+            return treatment
+        return self.repo.create_treatment(_UNASSIGNED_TREATMENT_NAME)
+
+    def _resolve_treatment_for_new_diagnosis(self, payload: dict[str, Any]) -> int:
+        treatment_id = payload.get("treatment_id")
+        if treatment_id is None:
+            return self._get_or_create_unassigned_treatment().id
+
+        treatment = self.repo.get_treatment(int(treatment_id))
+        if not treatment:
+            raise ValueError("Лечение не найдено")
+        return int(treatment_id)
+
+    def _assign_treatment_to_diagnosis(self, *, treatment_id: int, diagnosis_id: int | None) -> None:
+        if diagnosis_id is None:
+            return
+
+        diagnosis = self.repo.get_diagnosis(int(diagnosis_id))
+        if not diagnosis:
+            raise ValueError("Диагноз не найден")
+
+        unassigned = self._get_or_create_unassigned_treatment()
+        for linked_diagnosis in self.repo.list_diagnoses_using_treatment(int(treatment_id)):
+            if linked_diagnosis.id != diagnosis.id:
+                linked_diagnosis.treatment_id = unassigned.id
+
+        diagnosis.treatment_id = int(treatment_id)
+
     def create_diagnosis(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.repo.get_diagnosis_by_name(payload["name"]):
             raise ValueError("Диагноз с таким названием уже существует")
 
-        treatment = self.repo.get_treatment(payload["treatment_id"])
-        if not treatment:
-            raise ValueError("Лечение не найдено")
+        treatment_id = self._resolve_treatment_for_new_diagnosis(payload)
 
         criteria = payload.get("criteria", [])
         self._validate_criteria_payload(criteria)
@@ -561,7 +597,7 @@ class KnowledgeService:
         diagnosis = self.repo.create_diagnosis(
             name=payload["name"],
             icd10=payload.get("icd10"),
-            treatment_id=payload["treatment_id"],
+            treatment_id=treatment_id,
         )
 
         for item in criteria:
@@ -592,16 +628,19 @@ class KnowledgeService:
         if duplicate and duplicate.id != diagnosis_id:
             raise ValueError("Диагноз с таким названием уже существует")
 
-        treatment = self.repo.get_treatment(payload["treatment_id"])
-        if not treatment:
-            raise ValueError("Лечение не найдено")
+        treatment_id = payload.get("treatment_id")
+        if treatment_id is not None:
+            treatment = self.repo.get_treatment(int(treatment_id))
+            if not treatment:
+                raise ValueError("Лечение не найдено")
 
         criteria = payload.get("criteria", [])
         self._validate_criteria_payload(criteria)
 
         diagnosis.name = payload["name"]
         diagnosis.icd10 = payload.get("icd10")
-        diagnosis.treatment_id = payload["treatment_id"]
+        if treatment_id is not None:
+            diagnosis.treatment_id = int(treatment_id)
 
         self.repo.clear_diagnosis_criteria(diagnosis.id)
         for item in criteria:
@@ -660,6 +699,10 @@ class KnowledgeService:
         treatment = self.repo.create_treatment(name)
         for position, action in enumerate(actions):
             self.repo.create_treatment_action(treatment_id=treatment.id, position=position, action=action)
+        self._assign_treatment_to_diagnosis(
+            treatment_id=treatment.id,
+            diagnosis_id=payload.get("diagnosis_id"),
+        )
 
         try:
             self.repo.commit()
@@ -690,6 +733,10 @@ class KnowledgeService:
         self.repo.clear_treatment_actions(treatment_id)
         for position, action in enumerate(actions):
             self.repo.create_treatment_action(treatment_id=treatment_id, position=position, action=action)
+        self._assign_treatment_to_diagnosis(
+            treatment_id=treatment_id,
+            diagnosis_id=payload.get("diagnosis_id"),
+        )
 
         try:
             self.repo.commit()

@@ -225,7 +225,6 @@ def test_solve_endpoint_non_finite_value_returns_400(client, bad_value: str) -> 
 
 
 def test_create_and_delete_diagnosis(client) -> None:
-    treatments = client.get("/api/treatments").json()
     characteristics = _characteristics(client)
     enum_char = next(item for item in characteristics if item["type"] == "enum")
     enum_key = next(iter(enum_char["allowed"].keys()))
@@ -233,7 +232,6 @@ def test_create_and_delete_diagnosis(client) -> None:
     diagnosis = {
         "name": "Test diagnosis API",
         "icd10": "Z99",
-        "treatment_id": treatments[0]["id"],
         "criteria": [
             {
                 "characteristic_id": enum_char["id"],
@@ -246,6 +244,7 @@ def test_create_and_delete_diagnosis(client) -> None:
 
     created = client.post("/api/diagnoses", json=diagnosis)
     assert created.status_code == 200
+    assert created.json()["treatment_name"] == "Лечение не назначено"
 
     diagnosis_id = created.json()["id"]
     deleted = client.delete(f"/api/diagnoses/{diagnosis_id}")

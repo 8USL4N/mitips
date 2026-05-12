@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   createTreatment,
   deleteTreatment,
+  getDiagnosisById,
+  getDiagnoses,
   getTreatmentById,
   getTreatments,
   updateTreatment
@@ -9,12 +11,13 @@ import {
 import EditorModeSwitch from "./EditorModeSwitch";
 
 function emptyForm() {
-  return { name: "", actions: [] };
+  return { name: "", diagnosis_id: "", actions: [] };
 }
 
 export default function TreatmentsTab() {
   const [mode, setMode] = useState("create");
   const [treatments, setTreatments] = useState([]);
+  const [diagnoses, setDiagnoses] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(emptyForm());
   const [newAction, setNewAction] = useState("");
@@ -22,8 +25,9 @@ export default function TreatmentsTab() {
   const [error, setError] = useState("");
 
   async function refresh() {
-    const response = await getTreatments();
-    setTreatments(response.data);
+    const [treatmentsRes, diagnosesRes] = await Promise.all([getTreatments(), getDiagnoses()]);
+    setTreatments(treatmentsRes.data);
+    setDiagnoses(diagnosesRes.data);
   }
 
   useEffect(() => {
@@ -49,7 +53,11 @@ export default function TreatmentsTab() {
     }
     try {
       const response = await getTreatmentById(id);
-      setForm({ name: response.data.name, actions: response.data.actions || [] });
+      setForm({
+        name: response.data.name,
+        diagnosis_id: response.data.diagnosis_id ? String(response.data.diagnosis_id) : "",
+        actions: response.data.actions || []
+      });
     } catch (err) {
       setError(err.response?.data?.detail || "Не удалось загрузить лечение");
     }
@@ -75,9 +83,15 @@ export default function TreatmentsTab() {
   }
 
   async function createNew() {
+    if (!form.diagnosis_id) {
+      setError("Выберите диагноз для лечения");
+      setMessage("");
+      return;
+    }
     try {
       const created = await createTreatment({
         name: form.name.trim(),
+        diagnosis_id: Number(form.diagnosis_id),
         actions: form.actions
       });
       await refresh();
@@ -96,9 +110,15 @@ export default function TreatmentsTab() {
       setError("Выберите лечение");
       return;
     }
+    if (!form.diagnosis_id) {
+      setError("Выберите диагноз для лечения");
+      setMessage("");
+      return;
+    }
     try {
       await updateTreatment(Number(selectedId), {
         name: form.name.trim(),
+        diagnosis_id: Number(form.diagnosis_id),
         actions: form.actions
       });
       await refresh();
@@ -131,6 +151,26 @@ export default function TreatmentsTab() {
 
   const formLocked = mode === "edit" && !selectedId;
 
+  async function useDiagnosisTreatment(diagnosisId) {
+    setForm((prev) => ({ ...prev, diagnosis_id: diagnosisId }));
+    if (!diagnosisId || mode !== "create" || form.name.trim()) {
+      return;
+    }
+
+    try {
+      const response = await getDiagnosisById(diagnosisId);
+      if (response.data?.treatment_name) {
+        setForm((prev) => ({
+          ...prev,
+          diagnosis_id: diagnosisId,
+          name: response.data.treatment_name
+        }));
+      }
+    } catch {
+      // Название лечения можно ввести вручную; ошибка автозаполнения не критична.
+    }
+  }
+
   return (
     <div className="editor-grid">
       <EditorModeSwitch mode={mode} onModeChange={onModeChange} entityName="лечение" />
@@ -150,6 +190,22 @@ export default function TreatmentsTab() {
       )}
 
       {formLocked && <div className="alert">Выберите лечение для редактирования.</div>}
+
+      <label>
+        Диагноз
+        <select
+          disabled={formLocked}
+          value={form.diagnosis_id}
+          onChange={(e) => useDiagnosisTreatment(e.target.value)}
+        >
+          <option value="">-- выберите диагноз --</option>
+          {diagnoses.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label>
         Название лечения

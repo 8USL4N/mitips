@@ -129,6 +129,50 @@ def test_characteristics_crud_and_guards(client) -> None:
     assert usage.json()["diagnosis_count"] >= 1
 
 
+
+def test_treatment_can_be_assigned_from_treatments_section(client) -> None:
+    characteristic = next(item for item in client.get("/api/characteristics").json() if item["type"] == "enum")
+    enum_key = next(iter(characteristic["allowed"].keys()))
+
+    created_diagnosis = client.post(
+        "/api/diagnoses",
+        json={
+            "name": "Диагноз для назначения лечения",
+            "icd10": "T99",
+            "criteria": [
+                {
+                    "characteristic_id": characteristic["id"],
+                    "expected_enum_key": enum_key,
+                    "expected_min": None,
+                    "expected_max": None,
+                }
+            ],
+        },
+    )
+    assert created_diagnosis.status_code == 200
+    diagnosis_id = created_diagnosis.json()["id"]
+
+    created_treatment = client.post(
+        "/api/treatments",
+        json={
+            "name": "Лечение для выбранного диагноза",
+            "diagnosis_id": diagnosis_id,
+            "actions": ["Шаг лечения"],
+        },
+    )
+    assert created_treatment.status_code == 200
+    treatment_body = created_treatment.json()
+    assert treatment_body["diagnosis_id"] == diagnosis_id
+    assert treatment_body["diagnosis_name"] == "Диагноз для назначения лечения"
+
+    diagnosis_after_link = client.get(f"/api/diagnoses/{diagnosis_id}")
+    assert diagnosis_after_link.status_code == 200
+    assert diagnosis_after_link.json()["treatment_id"] == treatment_body["id"]
+    assert diagnosis_after_link.json()["treatment_name"] == "Лечение для выбранного диагноза"
+
+    assert client.delete(f"/api/diagnoses/{diagnosis_id}").status_code == 200
+    assert client.delete(f"/api/treatments/{treatment_body['id']}").status_code == 200
+
 def test_treatments_crud_and_delete_guard(client) -> None:
     create = client.post(
         "/api/treatments",

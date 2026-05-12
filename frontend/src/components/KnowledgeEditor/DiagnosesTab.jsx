@@ -5,7 +5,6 @@ import {
   getDiagnosisById,
   getDiagnoses,
   getCharacteristics,
-  getTreatments,
   updateDiagnosis
 } from "../../api/client";
 import EditorModeSwitch from "./EditorModeSwitch";
@@ -14,7 +13,6 @@ function emptyForm() {
   return {
     name: "",
     icd10: "",
-    treatment_id: "",
     criteria: []
   };
 }
@@ -45,10 +43,6 @@ function validateDiagnosisForm(form, characteristicById) {
   if (!form.name.trim()) {
     return "Название диагноза обязательно";
   }
-  if (!form.treatment_id) {
-    return "Лечение обязательно";
-  }
-
   for (const item of form.criteria) {
     if (!item.characteristic_id) {
       continue;
@@ -122,7 +116,6 @@ function buildPayload(form, characteristicById) {
   return {
     name: form.name.trim(),
     icd10: form.icd10.trim() ? form.icd10.trim() : null,
-    treatment_id: Number(form.treatment_id),
     criteria
   };
 }
@@ -130,7 +123,6 @@ function buildPayload(form, characteristicById) {
 export default function DiagnosesTab() {
   const [mode, setMode] = useState("create");
   const [diagnoses, setDiagnoses] = useState([]);
-  const [treatments, setTreatments] = useState([]);
   const [characteristics, setCharacteristics] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(emptyForm());
@@ -146,13 +138,11 @@ export default function DiagnosesTab() {
   }, [characteristics]);
 
   async function refresh() {
-    const [diagnosesRes, treatmentsRes, characteristicsRes] = await Promise.all([
+    const [diagnosesRes, characteristicsRes] = await Promise.all([
       getDiagnoses(),
-      getTreatments(),
       getCharacteristics()
     ]);
     setDiagnoses(diagnosesRes.data);
-    setTreatments(treatmentsRes.data);
     setCharacteristics(characteristicsRes.data);
   }
 
@@ -182,7 +172,6 @@ export default function DiagnosesTab() {
       setForm({
         name: item.name,
         icd10: item.icd10 || "",
-        treatment_id: String(item.treatment_id),
         criteria: criteriaFromDetail(item.criteria)
       });
     } catch (err) {
@@ -318,21 +307,9 @@ export default function DiagnosesTab() {
         />
       </label>
 
-      <label>
-        Лечение
-        <select
-          disabled={formLocked}
-          value={form.treatment_id}
-          onChange={(e) => setForm((prev) => ({ ...prev, treatment_id: e.target.value }))}
-        >
-          <option value="">-- выберите --</option>
-          {treatments.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="alert">
+        Лечение назначается во вкладке «Лечения»: сначала создайте или откройте лечение, затем выберите для него диагноз.
+      </div>
 
       <div>
         <p className="muted">Критерии диагноза</p>

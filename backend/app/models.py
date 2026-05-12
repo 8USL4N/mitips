@@ -1,4 +1,4 @@
-﻿from typing import Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -97,7 +97,7 @@ class DiagnosisDetailRead(DiagnosisSummaryRead):
 class DiagnosisUpsertRequest(BaseModel):
     name: str
     icd10: str | None = None
-    treatment_id: int
+    treatment_id: int | None = None
     criteria: list[DiagnosisCriterionInput] = Field(default_factory=list)
 
 
@@ -105,6 +105,8 @@ class TreatmentRead(BaseModel):
     id: int
     name: str
     actions: list[str]
+    diagnosis_id: int | None = None
+    diagnosis_name: str | None = None
 
 
 class TreatmentActionsUpdateRequest(BaseModel):
@@ -120,6 +122,7 @@ class TreatmentActionsUpdateRequest(BaseModel):
 class TreatmentUpsertRequest(BaseModel):
     name: str
     actions: list[str] = Field(default_factory=list)
+    diagnosis_id: int | None = None
 
     @field_validator("actions")
     @classmethod
